@@ -1,0 +1,1630 @@
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../models/match_record.dart';
+import '../models/player_stats.dart';
+import '../services/sheets_service.dart';
+import 'player_detail_screen.dart';
+
+class _MatchCardData {
+  int matchMode = 0;
+  bool isStarted = false;
+  bool isSubmitting = false;
+  int? rowIndex;
+  final List<String> teamA = [];
+  final List<String> teamB = [];
+
+  int get maxPerTeam => matchMode == 0 ? 2 : 1;
+  bool get isTeamReady =>
+      teamA.length == maxPerTeam && teamB.length == maxPerTeam;
+}
+
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final SheetsService _sheetsService = SheetsService();
+  List<PlayerStats> _playerStats = [];
+  String _dailyDate = '';
+  List<MapEntry<String, int>> _dailyRankings = [];
+  bool _isLoading = true;
+  String? _error;
+
+  int _selectedPlayerIndex = 0;
+  int _rankingTab = 0;
+  List<_MatchCardData> _matchCards = [_MatchCardData()];
+  List<MatchRecord> _allRecords = [];
+  List<String> _rankChanges = [];
+  bool _bannerDismissed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final results = await Future.wait([
+        _sheetsService.fetchPlayerStats(),
+        _sheetsService.fetchDailyRanking(),
+        _sheetsService.fetchInProgressGames(),
+      ]);
+      final stats = results[0] as List<PlayerStats>;
+      final daily =
+          results[1] as ({String date, List<MapEntry<String, int>> rankings});
+      final inProgressRecords = results[2] as List<MatchRecord>;
+
+      final prefs = await SharedPreferences.getInstance();
+      final savedName = prefs.getString('selected_player');
+
+      final changes = _detectRankChanges(prefs, stats);
+
+      final inProgressCards = _buildInProgressCards(inProgressRecords);
+
+      setState(() {
+        _playerStats = stats;
+        _dailyDate = daily.date;
+        _dailyRankings = daily.rankings;
+        _allRecords = inProgressRecords;
+        _rankChanges = changes;
+        _bannerDismissed = false;
+        _matchCards = inProgressCards.isNotEmpty
+            ? inProgressCards
+            : [_MatchCardData()];
+        if (savedName != null) {
+          final idx = stats.indexWhere((p) => p.name == savedName);
+          if (idx >= 0) _selectedPlayerIndex = idx;
+        }
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _error = e.toString();
+        _isLoading = false;
+      });
+    }
+  }
+
+  List<_MatchCardData> _buildInProgressCards(List<MatchRecord> records) {
+    final inProgress = records.where((r) => r.isInProgress).toList();
+    return inProgress.map((r) {
+      final card = _MatchCardData();
+      card.teamA.addAll(
+          [r.winner1, r.winner2].where((n) => n.isNotEmpty));
+      card.teamB.addAll(
+          [r.loser1, r.loser2].where((n) => n.isNotEmpty));
+      card.matchMode = card.teamA.length > 1 ? 0 : 1;
+      card.isStarted = true;
+      card.rowIndex = r.rowIndex;
+      return card;
+    }).toList();
+  }
+
+  List<String> _detectRankChanges(
+      SharedPreferences prefs, List<PlayerStats> stats) {
+    final today = DateTime.now();
+    final todayKey = '${today.year}-${today.month}-${today.day}';
+
+    final currentMap = <String, int>{};
+    for (final p in stats) {
+      currentMap[p.name] = p.rank;
+    }
+
+    final prevJson = prefs.getString('prev_rankings');
+    final prevDate = prefs.getString('prev_rankings_date');
+    final bannerJson = prefs.getString('rank_change_banner');
+    final bannerDate = prefs.getString('rank_change_banner_date');
+
+    if (prevJson != null && prevDate != null) {
+      final prevMap = Map<String, int>.from(json.decode(prevJson));
+
+      final messages = <String>[];
+      for (final p in stats) {
+        final prev = prevMap[p.name];
+        if (prev == null) continue;
+        final diff = prev - p.rank;
+        if (diff > 0) {
+          messages.add('${p.name} ${prev}위→${p.rank}위 (${diff}단계 상승)');
+        } else if (diff < 0) {
+          messages.add('${p.name} ${prev}위→${p.rank}위 (${diff.abs()}단계 하락)');
+        }
+      }
+
+      if (messages.isNotEmpty) {
+        prefs.setString('rank_change_banner', json.encode(messages));
+        prefs.setString('rank_change_banner_date', todayKey);
+      }
+
+      prefs.setString('prev_rankings', json.encode(currentMap));
+      prefs.setString('prev_rankings_date', todayKey);
+
+      if (messages.isNotEmpty) return messages;
+    } else {
+      prefs.setString('prev_rankings', json.encode(currentMap));
+      prefs.setString('prev_rankings_date', todayKey);
+    }
+
+    if (bannerJson != null && bannerDate == todayKey) {
+      return List<String>.from(json.decode(bannerJson));
+    }
+
+    return [];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey.shade100,
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? _buildError()
+              : RefreshIndicator(
+                  onRefresh: _loadData,
+                  child: SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    child: Column(
+                      children: [
+                        _buildHeader(),
+                        if (_rankChanges.isNotEmpty && !_bannerDismissed)
+                          _buildRankChangeBanner(),
+                        _buildPlayerCard(),
+                        _buildRankingCard(),
+                        ...List.generate(
+                          _matchCards.length,
+                          (i) => _buildMatchCard(i),
+                        ),
+                        _buildAddMatchButton(),
+                        const SizedBox(height: 24),
+                      ],
+                    ),
+                  ),
+                ),
+    );
+  }
+
+  Widget _buildError() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 48, color: Colors.red),
+            const SizedBox(height: 16),
+            Text(_error!, textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: _loadData,
+              icon: const Icon(Icons.refresh),
+              label: const Text('다시 시도'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Header ──
+  Widget _buildHeader() {
+    return Container(
+      padding: EdgeInsets.only(
+        top: MediaQuery.of(context).padding.top + 12,
+        left: 20,
+        right: 20,
+        bottom: 16,
+      ),
+      decoration: const BoxDecoration(
+        color: Color(0xFF1A1A2E),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.sports_tennis, color: Colors.white, size: 28),
+          const SizedBox(width: 10),
+          const Text(
+            '슈터탁구본부',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Text(
+              'D+${DateTime.now().difference(DateTime(2025, 1, 5)).inDays}',
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.refresh, color: Colors.white70, size: 22),
+            onPressed: _loadData,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Rank Change Banner ──
+  Widget _buildRankChangeBanner() {
+    final upChanges = _rankChanges.where((m) => m.contains('상승')).toList();
+    final downChanges = _rankChanges.where((m) => m.contains('하락')).toList();
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.amber.shade50, Colors.orange.shade50],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.amber.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.campaign, size: 18, color: Colors.orange),
+              const SizedBox(width: 6),
+              const Expanded(
+                child: Text(
+                  '랭킹 변동 알림',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1A1A2E),
+                  ),
+                ),
+              ),
+              GestureDetector(
+                onTap: () => setState(() => _bannerDismissed = true),
+                child: Icon(Icons.close, size: 18, color: Colors.grey.shade500),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ...upChanges.map((msg) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  children: [
+                    const Icon(Icons.arrow_upward,
+                        size: 14, color: Colors.blue),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(msg,
+                          style: const TextStyle(
+                              fontSize: 13, color: Colors.blue)),
+                    ),
+                  ],
+                ),
+              )),
+          ...downChanges.map((msg) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  children: [
+                    const Icon(Icons.arrow_downward,
+                        size: 14, color: Colors.red),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(msg,
+                          style:
+                              const TextStyle(fontSize: 13, color: Colors.red)),
+                    ),
+                  ],
+                ),
+              )),
+        ],
+      ),
+    );
+  }
+
+  // ── Player Card ──
+  Widget _buildPlayerCard() {
+    if (_playerStats.isEmpty) return const SizedBox.shrink();
+
+    final player = _playerStats[_selectedPlayerIndex];
+
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PlayerDetailScreen(player: player),
+        ),
+      ),
+      child: Container(
+        margin: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.06),
+              blurRadius: 10,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Row(
+                    children: [
+                      Text(
+                        player.name,
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      GestureDetector(
+                        onTap: () {
+                          _showPlayerPicker();
+                        },
+                        child: Icon(Icons.swap_horiz,
+                            size: 22, color: Colors.grey.shade400),
+                      ),
+                    ],
+                  ),
+                ),
+                Text(
+                  '${player.rank}위',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: player.rank <= 3 ? Colors.red : Colors.grey.shade700,
+                  ),
+                ),
+              ],
+            ),
+            if (player.currentStreak != 0) ...[
+              const SizedBox(height: 8),
+              _buildStreakBadge(player),
+            ],
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _buildStatItem(
+                  '참여율',
+                  '${player.participationRate.toStringAsFixed(1)}%',
+                ),
+                _buildStatItem(
+                  '승률',
+                  '${player.winRate.toStringAsFixed(1)}%',
+                ),
+                _buildStatItem(
+                  '승점',
+                  '${player.finalScore}점',
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStreakBadge(PlayerStats player) {
+    final streak = player.currentStreak;
+    final isWin = streak > 0;
+    final count = streak.abs();
+    final color = isWin ? Colors.blue : Colors.red;
+    final icon = isWin ? Icons.local_fire_department : Icons.trending_down;
+    final label = isWin ? '$count연승 중!' : '$count연패 중';
+    final maxLabel =
+        isWin ? '최장 ${player.maxWinStreak}연승' : '최장 ${player.maxLoseStreak}연패';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            maxLabel,
+            style: TextStyle(fontSize: 11, color: color.withValues(alpha: 0.6)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatItem(String label, String value) {
+    return Column(
+      children: [
+        Text(
+          label,
+          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _showPlayerPicker() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return ListView.builder(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          itemCount: _playerStats.length,
+          itemBuilder: (context, index) {
+            final p = _playerStats[index];
+            return ListTile(
+              leading: CircleAvatar(
+                backgroundColor: index == _selectedPlayerIndex
+                    ? Colors.indigo
+                    : Colors.grey.shade300,
+                child: Text(
+                  '${p.rank}',
+                  style: TextStyle(
+                    color: index == _selectedPlayerIndex
+                        ? Colors.white
+                        : Colors.black87,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              title: Text(p.name,
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: Text('${p.wins}승 ${p.losses}패 · 최종 ${p.finalScore}점'),
+              selected: index == _selectedPlayerIndex,
+              onTap: () async {
+                setState(() => _selectedPlayerIndex = index);
+                Navigator.pop(context);
+                // final prefs = await SharedPreferences.getInstance();
+                // await prefs.setString('selected_player', p.name);
+              },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ── Ranking Card (탭 전환) ──
+  Widget _buildRankingCard() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          _buildRankingTabs(),
+          const SizedBox(height: 12),
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            child: _rankingTab == 0
+                ? _buildDailyRankingContent()
+                : _buildOverallRankingContent(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRankingTabs() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.grey.shade200,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      padding: const EdgeInsets.all(3),
+      child: Row(
+        children: [
+          _buildTabButton(0, '당일 랭킹'),
+          _buildTabButton(1, '통합 랭킹'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTabButton(int index, String label) {
+    final isSelected = _rankingTab == index;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _rankingTab = index),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: isSelected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      blurRadius: 4,
+                      offset: const Offset(0, 1),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+              color:
+                  isSelected ? const Color(0xFF1A1A2E) : Colors.grey.shade600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── 당일 랭킹 콘텐츠 ──
+  Widget _buildDailyRankingContent() {
+    if (_dailyRankings.isEmpty) {
+      return const Padding(
+        key: ValueKey('daily_empty'),
+        padding: EdgeInsets.all(24),
+        child: Center(child: Text('당일 데이터 없음')),
+      );
+    }
+
+    return Column(
+      key: const ValueKey('daily'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: Text(
+            _dailyDate,
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+          ),
+        ),
+        const SizedBox(height: 4),
+        ...List.generate(_dailyRankings.length, (index) {
+          final entry = _dailyRankings[index];
+          final name = entry.key;
+          final change = entry.value;
+          final isCurrentPlayer = _playerStats.isNotEmpty &&
+              _playerStats[_selectedPlayerIndex].name == name;
+
+          Color scoreColor;
+          String prefix;
+          IconData icon;
+          if (change > 0) {
+            scoreColor = Colors.blue;
+            prefix = '+';
+            icon = Icons.arrow_drop_up;
+          } else if (change < 0) {
+            scoreColor = Colors.red;
+            prefix = '';
+            icon = Icons.arrow_drop_down;
+          } else {
+            scoreColor = Colors.grey;
+            prefix = '';
+            icon = Icons.remove;
+          }
+
+          return Container(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+            decoration: BoxDecoration(
+              color: isCurrentPlayer ? Colors.red.shade50 : null,
+              borderRadius: isCurrentPlayer ? BorderRadius.circular(8) : null,
+              border: isCurrentPlayer
+                  ? null
+                  : Border(
+                      bottom: BorderSide(
+                        color: Colors.grey.shade200,
+                        width: index < _dailyRankings.length - 1 ? 0.5 : 0,
+                      ),
+                    ),
+            ),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 28,
+                  child: Text(
+                    '${index + 1}',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                      color: isCurrentPlayer
+                          ? Colors.red
+                          : index < 3
+                              ? const Color(0xFF1A1A2E)
+                              : Colors.grey.shade500,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    name,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: isCurrentPlayer ? Colors.red : Colors.black87,
+                    ),
+                  ),
+                ),
+                Icon(icon, color: scoreColor, size: 22),
+                SizedBox(
+                  width: 40,
+                  child: Text(
+                    '$prefix$change',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: scoreColor,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  // ── 통합 랭킹 콘텐츠 ──
+  Widget _buildOverallRankingContent() {
+    return Column(
+      key: const ValueKey('overall'),
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            children: const [
+              SizedBox(
+                width: 40,
+                child: Text('랭킹',
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+              ),
+              Expanded(
+                flex: 2,
+                child: Text('이름',
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+              ),
+              Expanded(
+                flex: 3,
+                child: Text('전적',
+                    style: TextStyle(fontSize: 12, color: Colors.grey)),
+              ),
+              Expanded(
+                flex: 2,
+                child: Text('최종 점수',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                    textAlign: TextAlign.center),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        ...List.generate(
+          _playerStats.length,
+          (index) => _buildOverallRankingRow(_playerStats[index]),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOverallRankingRow(PlayerStats player) {
+    final isCurrentPlayer = _playerStats.isNotEmpty &&
+        _playerStats[_selectedPlayerIndex].name == player.name;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      decoration: BoxDecoration(
+        color: isCurrentPlayer ? Colors.red.shade50 : null,
+        border: Border(
+          bottom: BorderSide(color: Colors.grey.shade200, width: 0.5),
+        ),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 40,
+            child: Text(
+              '${player.rank}위',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isCurrentPlayer ? Colors.red : Colors.black87,
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: Text(
+              player.name,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: isCurrentPlayer ? Colors.red : Colors.black87,
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 3,
+            child: Text(
+              '${player.totalGames}전 ${player.wins}승 ${player.losses}패',
+              style: TextStyle(
+                fontSize: 12,
+                color: isCurrentPlayer
+                    ? Colors.red.shade400
+                    : Colors.grey.shade700,
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: Text(
+              '${player.finalScore}',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: player.finalScore > 0
+                    ? Colors.blue
+                    : player.finalScore < 0
+                        ? Colors.red
+                        : Colors.grey,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Match Cards ──
+  double _teamWinRate(List<String> team) {
+    if (team.isEmpty) return 50;
+    double sum = 0;
+    int count = 0;
+    for (final name in team) {
+      final stat = _playerStats.where((p) => p.name == name).firstOrNull;
+      if (stat != null && (stat.wins + stat.losses) > 0) {
+        sum += stat.winRate;
+        count++;
+      }
+    }
+    return count > 0 ? sum / count : 50;
+  }
+
+  ({double teamA, double teamB}) _predictWinRate(_MatchCardData card) {
+    final rateA = _teamWinRate(card.teamA);
+    final rateB = _teamWinRate(card.teamB);
+    final total = rateA + rateB;
+    if (total == 0) return (teamA: 50, teamB: 50);
+    return (
+      teamA: (rateA / total * 100),
+      teamB: (rateB / total * 100),
+    );
+  }
+
+  Widget _buildPrediction(_MatchCardData card) {
+    final pred = _predictWinRate(card);
+    final aWin = pred.teamA;
+    final bWin = pred.teamB;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        children: [
+          Text(
+            '예상 승률',
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.grey.shade500,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Text(
+                '${aWin.toStringAsFixed(0)}%',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: aWin >= bWin ? Colors.blue : Colors.blue.shade200,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: SizedBox(
+                    height: 8,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          flex: aWin.round().clamp(1, 99),
+                          child: Container(color: Colors.blue),
+                        ),
+                        Expanded(
+                          flex: bWin.round().clamp(1, 99),
+                          child: Container(color: Colors.red),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '${bWin.toStringAsFixed(0)}%',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: bWin >= aWin ? Colors.red : Colors.red.shade200,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAddMatchButton() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: OutlinedButton.icon(
+        onPressed: () => setState(() => _matchCards.add(_MatchCardData())),
+        icon: const Icon(Icons.add, size: 18),
+        label: const Text('경기 추가'),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: const Color(0xFF1A1A2E),
+          side: BorderSide(color: Colors.grey.shade300),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMatchCard(int cardIndex) {
+    final card = _matchCards[cardIndex];
+    final allNames = _playerStats.map((p) => p.name).toList();
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Text(
+                card.isStarted
+                    ? '경기 ${cardIndex + 1}'
+                    : (_matchCards.length > 1
+                        ? '경기 ${cardIndex + 1}'
+                        : '경기 기록'),
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              if (card.isStarted) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.green.shade300),
+                  ),
+                  child: Text(
+                    '진행중',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green.shade700,
+                    ),
+                  ),
+                ),
+              ],
+              const Spacer(),
+              if (card.isStarted)
+                GestureDetector(
+                  onTap: () => _cancelGame(cardIndex),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.red.shade200),
+                    ),
+                    child: Text(
+                      '경기취소',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.red.shade700,
+                      ),
+                    ),
+                  ),
+                ),
+              if (!card.isStarted && _matchCards.length > 1) ...[
+                if (card.isStarted) const SizedBox(width: 12),
+                GestureDetector(
+                  onTap: () => setState(() => _matchCards.removeAt(cardIndex)),
+                  child:
+                      Icon(Icons.close, size: 20, color: Colors.grey.shade400),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 10),
+          _buildMatchModeTabs(card),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _buildTeamBox(
+                    'A팀', card.teamA, Colors.blue, allNames, card),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                child: Text(
+                  'VS',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: Colors.grey,
+                  ),
+                ),
+              ),
+              Expanded(
+                child:
+                    _buildTeamBox('B팀', card.teamB, Colors.red, allNames, card),
+              ),
+            ],
+          ),
+          if (card.isTeamReady && !card.isStarted) ...[
+            const SizedBox(height: 12),
+            _buildPrediction(card),
+          ],
+          const SizedBox(height: 16),
+          if (!card.isStarted && card.isSubmitting)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (!card.isStarted)
+            SizedBox(
+              height: 48,
+              child: ElevatedButton(
+                onPressed: card.isTeamReady
+                    ? () => _startGame(cardIndex)
+                    : null,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1A1A2E),
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor: Colors.grey.shade300,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: const Text(
+                  '경기 시작',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ),
+            )
+          else
+            _buildWinnerSelection(cardIndex),
+        ],
+      ),
+    );
+  }
+
+  bool _isSameTeams(List<String> a1, List<String> b1,
+      List<String> a2, List<String> b2) {
+    final sa1 = [...a1]..sort();
+    final sb1 = [...b1]..sort();
+    final sa2 = [...a2]..sort();
+    final sb2 = [...b2]..sort();
+    return _listEquals(sa1, sa2) && _listEquals(sb1, sb2);
+  }
+
+  bool _listEquals(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  Future<void> _startGame(int cardIndex) async {
+    final card = _matchCards[cardIndex];
+
+    final inProgressRecords =
+        _allRecords.where((r) => r.isInProgress).toList();
+    for (final r in inProgressRecords) {
+      final existA =
+          [r.winner1, r.winner2].where((n) => n.isNotEmpty).toList();
+      final existB =
+          [r.loser1, r.loser2].where((n) => n.isNotEmpty).toList();
+      if (_isSameTeams(card.teamA, card.teamB, existA, existB)) {
+        if (mounted) {
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              title: const Text('중복 경기'),
+              content: const Text('동일한 선수의 진행중 경기가 있습니다.'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('확인'),
+                ),
+              ],
+            ),
+          );
+        }
+        return;
+      }
+    }
+
+    setState(() => card.isSubmitting = true);
+
+    try {
+      final rowIndex = await _sheetsService.startGame(
+        teamA1: card.teamA[0],
+        teamA2: card.teamA.length > 1 ? card.teamA[1] : '',
+        teamB1: card.teamB[0],
+        teamB2: card.teamB.length > 1 ? card.teamB[1] : '',
+      );
+
+      setState(() {
+        card.isStarted = true;
+        card.isSubmitting = false;
+        card.rowIndex = rowIndex;
+      });
+
+      _allRecords.add(MatchRecord(
+        rowIndex: rowIndex,
+        date: '',
+        winner1: card.teamA[0],
+        winner2: card.teamA.length > 1 ? card.teamA[1] : '',
+        loser1: card.teamB[0],
+        loser2: card.teamB.length > 1 ? card.teamB[1] : '',
+        status: '진행중',
+      ));
+    } catch (e) {
+      setState(() => card.isSubmitting = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('경기 시작 실패: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _cancelGame(int cardIndex) async {
+    final card = _matchCards[cardIndex];
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('경기취소'),
+        content: const Text('진행중인 경기를 취소하시겠습니까?\n기록도 함께 삭제됩니다.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('아니오'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('경기취소'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    try {
+      if (card.rowIndex != null) {
+        await _sheetsService.cancelInProgressGame(card.rowIndex!);
+      }
+
+      setState(() {
+        if (_matchCards.length > 1) {
+          _matchCards.removeAt(cardIndex);
+        } else {
+          card.teamA.clear();
+          card.teamB.clear();
+          card.isStarted = false;
+          card.rowIndex = null;
+        }
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('경기가 취소되었습니다'),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('경기취소 실패: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+    }
+  }
+
+  Widget _buildWinnerSelection(int cardIndex) {
+    final card = _matchCards[cardIndex];
+
+    if (card.isSubmitting) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 12),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    return Column(
+      children: [
+        Text(
+          '승리 팀을 선택하세요',
+          style: TextStyle(
+            fontSize: 13,
+            color: Colors.grey.shade600,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 48,
+                child: ElevatedButton(
+                  onPressed: () =>
+                      _submitResult(cardIndex, isTeamAWinner: true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  child: const Text(
+                    'A팀 승리',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: SizedBox(
+                height: 48,
+                child: ElevatedButton(
+                  onPressed: () =>
+                      _submitResult(cardIndex, isTeamAWinner: false),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  child: const Text(
+                    'B팀 승리',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMatchModeTabs(_MatchCardData card) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.grey.shade200,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      padding: const EdgeInsets.all(3),
+      child: Row(
+        children: [
+          _buildModeTabButton(0, '2 vs 2', card),
+          _buildModeTabButton(1, '1 vs 1', card),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildModeTabButton(int index, String label, _MatchCardData card) {
+    final isSelected = card.matchMode == index;
+    return Expanded(
+      child: GestureDetector(
+        onTap: card.isStarted
+            ? null
+            : () {
+                setState(() {
+                  card.matchMode = index;
+                  card.teamA.clear();
+                  card.teamB.clear();
+                });
+              },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: isSelected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      blurRadius: 4,
+                      offset: const Offset(0, 1),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+              color:
+                  isSelected ? const Color(0xFF1A1A2E) : Colors.grey.shade600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _submitResult(int cardIndex,
+      {required bool isTeamAWinner}) async {
+    final card = _matchCards[cardIndex];
+    final winners = isTeamAWinner ? card.teamA : card.teamB;
+    final losers = isTeamAWinner ? card.teamB : card.teamA;
+
+    final winner1 = winners[0];
+    final winner2 = winners.length > 1 ? winners[1] : '';
+    final loser1 = losers[0];
+    final loser2 = losers.length > 1 ? losers[1] : '';
+
+    final winnerText = winner2.isEmpty ? winner1 : '$winner1, $winner2';
+    final loserText = loser2.isEmpty ? loser1 : '$loser1, $loser2';
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('경기 결과 저장'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.emoji_events, color: Colors.amber, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text('승: $winnerText',
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Icon(Icons.close, color: Colors.red.shade300, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text('패: $loserText',
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const Text('이 결과를 저장하시겠습니까?'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1A1A2E),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('저장'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => card.isSubmitting = true);
+
+    try {
+      if (card.rowIndex != null) {
+        await _sheetsService.completeGame(
+          rowIndex: card.rowIndex!,
+          winner1: winner1,
+          winner2: winner2,
+          loser1: loser1,
+          loser2: loser2,
+        );
+      } else {
+        await _sheetsService.submitMatchResult(
+          winner1: winner1,
+          winner2: winner2,
+          loser1: loser1,
+          loser2: loser2,
+        );
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        if (_matchCards.length > 1) {
+          _matchCards.removeAt(cardIndex);
+        } else {
+          card.teamA.clear();
+          card.teamB.clear();
+          card.isStarted = false;
+          card.isSubmitting = false;
+          card.rowIndex = null;
+        }
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('저장 완료! 승: $winnerText'),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+
+      _loadData();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => card.isSubmitting = false);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('저장 실패: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+    }
+  }
+
+  Widget _buildTeamBox(
+    String label,
+    List<String> team,
+    Color color,
+    List<String> allNames,
+    _MatchCardData card,
+  ) {
+    final availableNames = allNames
+        .where((n) => !card.teamA.contains(n) && !card.teamB.contains(n))
+        .toList();
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ...team.map(
+            (name) => Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Chip(
+                label: Text(name, style: const TextStyle(fontSize: 12)),
+                deleteIcon:
+                    card.isStarted ? null : const Icon(Icons.close, size: 16),
+                onDeleted: card.isStarted
+                    ? null
+                    : () {
+                        setState(() => team.remove(name));
+                      },
+                backgroundColor: color.withValues(alpha: 0.1),
+                side: BorderSide.none,
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+          ),
+          if (team.length < card.maxPerTeam && !card.isStarted)
+            InkWell(
+              onTap: () => _showPlayerSelector(availableNames, team),
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.add_circle_outline, size: 18, color: color),
+                    const SizedBox(width: 4),
+                    Text(
+                      '선수 추가',
+                      style: TextStyle(fontSize: 12, color: color),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _showPlayerSelector(List<String> available, List<String> team) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                '선수 선택',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const Divider(height: 1),
+            ...available.map(
+              (name) => ListTile(
+                title: Text(name),
+                onTap: () {
+                  setState(() => team.add(name));
+                  Navigator.pop(context);
+                },
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+        );
+      },
+    );
+  }
+}
