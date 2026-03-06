@@ -1597,32 +1597,51 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showPlayerSelector(List<String> available, List<String> team) {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       builder: (context) {
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text(
-                '선수 선택',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        const double listTileHeight = 56.0;
+        const double headerHeight = 53.0; // Padding(16) + Text + Padding(16)
+        const double dividerHeight = 1.0;
+        final double bottomPadding = MediaQuery.of(context).padding.bottom + 8;
+        final double screenHeight = MediaQuery.of(context).size.height;
+
+        final double contentHeight =
+            headerHeight + dividerHeight + (available.length * listTileHeight) + bottomPadding;
+        final double sheetHeight = contentHeight.clamp(0, screenHeight * 0.75);
+
+        return SizedBox(
+          height: sheetHeight,
+          child: Column(
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  '선수 선택',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
               ),
-            ),
-            const Divider(height: 1),
-            ...available.map(
-              (name) => ListTile(
-                title: Text(name),
-                onTap: () {
-                  setState(() => team.add(name));
-                  Navigator.pop(context);
-                },
+              const Divider(height: 1),
+              Expanded(
+                child: ListView(
+                  padding: EdgeInsets.only(bottom: bottomPadding),
+                  children: available
+                      .map(
+                        (name) => ListTile(
+                          title: Text(name),
+                          onTap: () {
+                            setState(() => team.add(name));
+                            Navigator.pop(context);
+                          },
+                        ),
+                      )
+                      .toList(),
+                ),
               ),
-            ),
-            const SizedBox(height: 16),
-          ],
+            ],
+          ),
         );
       },
     );
