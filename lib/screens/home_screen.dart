@@ -39,6 +39,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<_MatchCardData> _matchCards = [_MatchCardData()];
   List<String> _rankChanges = [];
   bool _bannerDismissed = false;
+  List<MatchRecord> _matchRecords = [];
 
   @override
   void initState() {
@@ -57,11 +58,13 @@ class _HomeScreenState extends State<HomeScreen> {
         _sheetsService.fetchPlayerStats(),
         _sheetsService.fetchDailyRanking(),
         _sheetsService.fetchInProgressGames(),
+        _sheetsService.fetchMatchRecords(),
       ]);
       final stats = results[0] as List<PlayerStats>;
       final daily =
           results[1] as ({String date, List<MapEntry<String, int>> rankings});
       final inProgressRecords = results[2] as List<MatchRecord>;
+      final allRecords = results[3] as List<MatchRecord>;
 
       final prefs = await SharedPreferences.getInstance();
       final savedName = prefs.getString('selected_player');
@@ -76,9 +79,9 @@ class _HomeScreenState extends State<HomeScreen> {
         _dailyRankings = daily.rankings;
         _rankChanges = changes;
         _bannerDismissed = false;
-        _matchCards = inProgressCards.isNotEmpty
-            ? inProgressCards
-            : [_MatchCardData()];
+        _matchRecords = allRecords;
+        _matchCards =
+            inProgressCards.isNotEmpty ? inProgressCards : [_MatchCardData()];
         if (savedName != null) {
           final idx = stats.indexWhere((p) => p.name == savedName);
           if (idx >= 0) _selectedPlayerIndex = idx;
@@ -97,10 +100,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final inProgress = records.where((r) => r.isInProgress).toList();
     return inProgress.map((r) {
       final card = _MatchCardData();
-      card.teamA.addAll(
-          [r.winner1, r.winner2].where((n) => n.isNotEmpty));
-      card.teamB.addAll(
-          [r.loser1, r.loser2].where((n) => n.isNotEmpty));
+      card.teamA.addAll([r.winner1, r.winner2].where((n) => n.isNotEmpty));
+      card.teamB.addAll([r.loser1, r.loser2].where((n) => n.isNotEmpty));
       card.matchMode = card.teamA.length > 1 ? 0 : 1;
       card.isStarted = true;
       card.rowIndex = r.rowIndex;
@@ -986,8 +987,8 @@ class _HomeScreenState extends State<HomeScreen> {
               if (card.isStarted) ...[
                 const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 3),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
                     color: Colors.green.shade50,
                     borderRadius: BorderRadius.circular(8),
@@ -1008,8 +1009,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 GestureDetector(
                   onTap: () => _cancelGame(cardIndex),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
                       color: Colors.red.shade50,
                       borderRadius: BorderRadius.circular(8),
@@ -1078,7 +1079,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-
   Future<void> _cancelGame(int cardIndex) async {
     final card = _matchCards[cardIndex];
 
@@ -1129,8 +1129,8 @@ class _HomeScreenState extends State<HomeScreen> {
             content: const Text('경기가 취소되었습니다'),
             backgroundColor: Colors.orange,
             behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
         );
       }
@@ -1141,8 +1141,8 @@ class _HomeScreenState extends State<HomeScreen> {
             content: Text('경기취소 실패: $e'),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
         );
       }
@@ -1285,6 +1285,58 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// 5분 이내에 동일한 팀 구성의 경기 기록이 있는지 확인
+  bool _hasDuplicateRecord(
+      List<String> winners, List<String> losers) {
+    final winSet = winners.where((n) => n.isNotEmpty).toSet();
+    final loseSet = losers.where((n) => n.isNotEmpty).toSet();
+    final allPlayers = {...winSet, ...loseSet};
+
+    final now = DateTime.now();
+    for (final r in _matchRecords.reversed) {
+      // 날짜 파싱 (형식: "YYYY.MM.DD HH:mm" 또는 "YYYY.M.D H:mm")
+      DateTime? recordTime;
+      try {
+        final trimmed = r.date.trim();
+        final spaceIdx = trimmed.indexOf(' ');
+        if (spaceIdx >= 0) {
+          final datePart = trimmed.substring(0, spaceIdx);
+          final timePart = trimmed.substring(spaceIdx + 1);
+          final dateParts = datePart.split('.');
+          final timeParts = timePart.split(':');
+          if (dateParts.length >= 3 && timeParts.length >= 2) {
+            recordTime = DateTime(
+              int.parse(dateParts[0]),
+              int.parse(dateParts[1]),
+              int.parse(dateParts[2]),
+              int.parse(timeParts[0]),
+              int.parse(timeParts[1]),
+            );
+          }
+        }
+      } catch (_) {
+        continue;
+      }
+      if (recordTime == null) continue;
+
+      // 5분 초과한 기록은 무시
+      if (now.difference(recordTime).inMinutes > 5) continue;
+
+      final rWinSet = {r.winner1, r.winner2}.where((n) => n.isNotEmpty).toSet();
+      final rLoseSet = {r.loser1, r.loser2}.where((n) => n.isNotEmpty).toSet();
+      final rAllPlayers = {...rWinSet, ...rLoseSet};
+
+      // 팀 구성이 동일한지 확인 (팀 순서 무관)
+      if (rAllPlayers.length == allPlayers.length &&
+          rAllPlayers.containsAll(allPlayers) &&
+          ((rWinSet.containsAll(winSet) && rLoseSet.containsAll(loseSet)) ||
+              (rWinSet.containsAll(loseSet) && rLoseSet.containsAll(winSet)))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   Future<void> _submitResult(int cardIndex,
       {required bool isTeamAWinner}) async {
     final card = _matchCards[cardIndex];
@@ -1292,9 +1344,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final losers = isTeamAWinner ? card.teamB : card.teamA;
 
     // 현재 선택된 플레이어가 승리팀에 포함됐는지 미리 확인 (비동기 전에 캡처)
-    final currentPlayerName = _playerStats.isNotEmpty
-        ? _playerStats[_selectedPlayerIndex].name
-        : '';
+    final currentPlayerName =
+        _playerStats.isNotEmpty ? _playerStats[_selectedPlayerIndex].name : '';
     final currentPlayerWon = winners.contains(currentPlayerName);
     final winTeamCopy = List<String>.from(winners);
 
@@ -1305,6 +1356,43 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final winnerText = winner2.isEmpty ? winner1 : '$winner1, $winner2';
     final loserText = loser2.isEmpty ? loser1 : '$loser1, $loser2';
+
+    // 5분 이내 동일 팀 구성 기록 존재 시 경고 얼럿
+    if (_hasDuplicateRecord(winners, losers)) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              Icon(Icons.warning_amber_rounded,
+                  color: Colors.orange.shade600, size: 22),
+              const SizedBox(width: 8),
+              const Text('중복 기록 감지'),
+            ],
+          ),
+          content: const Text(
+            '최근 동일한 저장 기록이 존재합니다.\n저장하시겠습니까?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('취소'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange.shade600,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('저장'),
+            ),
+          ],
+        ),
+      );
+      if (proceed != true || !mounted) return;
+    }
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1441,106 +1529,81 @@ class _HomeScreenState extends State<HomeScreen> {
     final needMore = team.length < card.maxPerTeam && !card.isStarted;
 
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.all(5),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Center(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.bold,
-                color: color,
-              ),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: color,
             ),
           ),
           const SizedBox(height: 8),
-          // 선택된 선수 - 풀 너비 행
+          // 선택된 선수 칩
           ...team.map(
-            (name) => Container(
-              height: 44,
-              margin: const EdgeInsets.only(bottom: 6),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: color.withValues(alpha: 0.5)),
-              ),
-              child: Row(
-                children: [
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      name,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: color,
-                      ),
-                    ),
-                  ),
-                  if (!card.isStarted)
-                    GestureDetector(
-                      onTap: () => setState(() => team.remove(name)),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        child: Icon(Icons.close,
-                            size: 18,
-                            color: color.withValues(alpha: 0.6)),
-                      ),
-                    ),
-                ],
+            (name) => Padding(
+              padding: const EdgeInsets.only(bottom: 5),
+              child: Chip(
+                label: Text(name, style: const TextStyle(fontSize: 12)),
+                deleteIcon:
+                    card.isStarted ? null : const Icon(Icons.close, size: 16),
+                onDeleted: card.isStarted
+                    ? null
+                    : () => setState(() => team.remove(name)),
+                backgroundColor: color.withValues(alpha: 0.15),
+                side: BorderSide(color: color.withValues(alpha: 0.4)),
+                visualDensity: VisualDensity.compact,
               ),
             ),
           ),
-          // 선택 가능한 선수 - 풀 너비 버튼
+          // 추가 가능한 선수 인라인 칩
           if (needMore && availableNames.isNotEmpty) ...[
-            if (team.isNotEmpty) const SizedBox(height: 2),
-            ...availableNames.map(
-              (name) => GestureDetector(
-                onTap: () => setState(() => team.add(name)),
-                child: Container(
-                  height: 44,
-                  margin: const EdgeInsets.only(bottom: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: color.withValues(alpha: 0.25)),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.add,
-                          size: 16, color: color.withValues(alpha: 0.6)),
-                      const SizedBox(width: 6),
-                      Text(
-                        name,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: color.withValues(alpha: 0.8),
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 5,
+              runSpacing: 4,
+              alignment: WrapAlignment.center,
+              children: availableNames
+                  .map(
+                    (name) => GestureDetector(
+                      onTap: () => setState(() => team.add(name)),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          border:
+                              Border.all(color: color.withValues(alpha: 0.35)),
+                        ),
+                        child: Text(
+                          name,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: color.withValues(alpha: 0.85),
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ),
-                    ],
-                  ),
-                ),
-              ),
+                    ),
+                  )
+                  .toList(),
             ),
           ],
           if (needMore && availableNames.isEmpty)
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Center(
-                child: Text(
-                  '선택 가능한 선수 없음',
-                  style:
-                      TextStyle(fontSize: 12, color: Colors.grey.shade400),
-                ),
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '선택 가능한 선수 없음',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
               ),
             ),
         ],
