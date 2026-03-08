@@ -37,7 +37,6 @@ class _HomeScreenState extends State<HomeScreen> {
   int _selectedPlayerIndex = 0;
   int _rankingTab = 0;
   List<_MatchCardData> _matchCards = [_MatchCardData()];
-  List<MatchRecord> _allRecords = [];
   List<String> _rankChanges = [];
   bool _bannerDismissed = false;
 
@@ -75,7 +74,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _playerStats = stats;
         _dailyDate = daily.date;
         _dailyRankings = daily.rankings;
-        _allRecords = inProgressRecords;
         _rankChanges = changes;
         _bannerDismissed = false;
         _matchCards = inProgressCards.isNotEmpty
@@ -1068,128 +1066,18 @@ class _HomeScreenState extends State<HomeScreen> {
             _buildPrediction(card),
           ],
           const SizedBox(height: 16),
-          if (!card.isStarted && card.isSubmitting)
+          if (card.isSubmitting)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 12),
               child: Center(child: CircularProgressIndicator()),
             )
-          else if (!card.isStarted)
-            SizedBox(
-              height: 48,
-              child: ElevatedButton(
-                onPressed: card.isTeamReady
-                    ? () => _startGame(cardIndex)
-                    : null,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1A1A2E),
-                  foregroundColor: Colors.white,
-                  disabledBackgroundColor: Colors.grey.shade300,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                child: const Text(
-                  '경기 시작',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-              ),
-            )
-          else
+          else if (card.isTeamReady)
             _buildWinnerSelection(cardIndex),
         ],
       ),
     );
   }
 
-  bool _isSameTeams(List<String> a1, List<String> b1,
-      List<String> a2, List<String> b2) {
-    final sa1 = [...a1]..sort();
-    final sb1 = [...b1]..sort();
-    final sa2 = [...a2]..sort();
-    final sb2 = [...b2]..sort();
-    return _listEquals(sa1, sa2) && _listEquals(sb1, sb2);
-  }
-
-  bool _listEquals(List<String> a, List<String> b) {
-    if (a.length != b.length) return false;
-    for (int i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
-  }
-
-  Future<void> _startGame(int cardIndex) async {
-    final card = _matchCards[cardIndex];
-
-    final inProgressRecords =
-        _allRecords.where((r) => r.isInProgress).toList();
-    for (final r in inProgressRecords) {
-      final existA =
-          [r.winner1, r.winner2].where((n) => n.isNotEmpty).toList();
-      final existB =
-          [r.loser1, r.loser2].where((n) => n.isNotEmpty).toList();
-      if (_isSameTeams(card.teamA, card.teamB, existA, existB)) {
-        if (mounted) {
-          showDialog(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16)),
-              title: const Text('중복 경기'),
-              content: const Text('동일한 선수의 진행중 경기가 있습니다.'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('확인'),
-                ),
-              ],
-            ),
-          );
-        }
-        return;
-      }
-    }
-
-    setState(() => card.isSubmitting = true);
-
-    try {
-      final rowIndex = await _sheetsService.startGame(
-        teamA1: card.teamA[0],
-        teamA2: card.teamA.length > 1 ? card.teamA[1] : '',
-        teamB1: card.teamB[0],
-        teamB2: card.teamB.length > 1 ? card.teamB[1] : '',
-      );
-
-      setState(() {
-        card.isStarted = true;
-        card.isSubmitting = false;
-        card.rowIndex = rowIndex;
-      });
-
-      _allRecords.add(MatchRecord(
-        rowIndex: rowIndex,
-        date: '',
-        winner1: card.teamA[0],
-        winner2: card.teamA.length > 1 ? card.teamA[1] : '',
-        loser1: card.teamB[0],
-        loser2: card.teamB.length > 1 ? card.teamB[1] : '',
-        status: '진행중',
-      ));
-    } catch (e) {
-      setState(() => card.isSubmitting = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('경기 시작 실패: $e'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10)),
-          ),
-        );
-      }
-    }
-  }
 
   Future<void> _cancelGame(int cardIndex) async {
     final card = _matchCards[cardIndex];
@@ -1403,6 +1291,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final winners = isTeamAWinner ? card.teamA : card.teamB;
     final losers = isTeamAWinner ? card.teamB : card.teamA;
 
+    // 현재 선택된 플레이어가 승리팀에 포함됐는지 미리 확인 (비동기 전에 캡처)
+    final currentPlayerName = _playerStats.isNotEmpty
+        ? _playerStats[_selectedPlayerIndex].name
+        : '';
+    final currentPlayerWon = winners.contains(currentPlayerName);
+    final winTeamCopy = List<String>.from(winners);
+
     final winner1 = winners[0];
     final winner2 = winners.length > 1 ? winners[1] : '';
     final loser1 = losers[0];
@@ -1485,18 +1380,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
       if (!mounted) return;
 
-      setState(() {
-        if (_matchCards.length > 1) {
-          _matchCards.removeAt(cardIndex);
-        } else {
-          card.teamA.clear();
-          card.teamB.clear();
-          card.isStarted = false;
-          card.isSubmitting = false;
-          card.rowIndex = null;
-        }
-      });
-
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('저장 완료! 승: $winnerText'),
@@ -1507,7 +1390,28 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
 
-      _loadData();
+      // _loadData가 _matchCards를 새로 초기화하므로 먼저 await
+      await _loadData();
+
+      // 로드 완료 후 A팀 복원
+      if (!mounted) return;
+      if (currentPlayerName.isNotEmpty &&
+          _matchCards.isNotEmpty &&
+          _matchCards.length == 1) {
+        setState(() {
+          if (currentPlayerWon) {
+            // 이긴 경우: 승리팀 전체 유지
+            _matchCards[0].teamA
+              ..clear()
+              ..addAll(winTeamCopy);
+          } else {
+            // 진 경우: 내 이름만 A팀에 남김
+            _matchCards[0].teamA
+              ..clear()
+              ..add(currentPlayerName);
+          }
+        });
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => card.isSubmitting = false);
@@ -1534,6 +1438,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final availableNames = allNames
         .where((n) => !card.teamA.contains(n) && !card.teamB.contains(n))
         .toList();
+    final needMore = team.length < card.maxPerTeam && !card.isStarted;
 
     return Container(
       padding: const EdgeInsets.all(10),
@@ -1543,6 +1448,7 @@ class _HomeScreenState extends State<HomeScreen> {
         border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Text(
             label,
@@ -1553,6 +1459,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const SizedBox(height: 8),
+          // 선택된 선수 칩
           ...team.map(
             (name) => Padding(
               padding: const EdgeInsets.only(bottom: 4),
@@ -1562,88 +1469,57 @@ class _HomeScreenState extends State<HomeScreen> {
                     card.isStarted ? null : const Icon(Icons.close, size: 16),
                 onDeleted: card.isStarted
                     ? null
-                    : () {
-                        setState(() => team.remove(name));
-                      },
-                backgroundColor: color.withValues(alpha: 0.1),
-                side: BorderSide.none,
+                    : () => setState(() => team.remove(name)),
+                backgroundColor: color.withValues(alpha: 0.15),
+                side: BorderSide(color: color.withValues(alpha: 0.4)),
                 visualDensity: VisualDensity.compact,
               ),
             ),
           ),
-          if (team.length < card.maxPerTeam && !card.isStarted)
-            InkWell(
-              onTap: () => _showPlayerSelector(availableNames, team),
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.add_circle_outline, size: 18, color: color),
-                    const SizedBox(width: 4),
-                    Text(
-                      '선수 추가',
-                      style: TextStyle(fontSize: 12, color: color),
+          // 추가 가능한 선수 인라인 칩
+          if (needMore && availableNames.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              alignment: WrapAlignment.center,
+              children: availableNames
+                  .map(
+                    (name) => GestureDetector(
+                      onTap: () => setState(() => team.add(name)),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                              color: color.withValues(alpha: 0.35)),
+                        ),
+                        child: Text(
+                          name,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: color.withValues(alpha: 0.85),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
                     ),
-                  ],
-                ),
+                  )
+                  .toList(),
+            ),
+          ],
+          if (needMore && availableNames.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '선택 가능한 선수 없음',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
               ),
             ),
         ],
       ),
-    );
-  }
-
-  void _showPlayerSelector(List<String> available, List<String> team) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) {
-        const double listTileHeight = 56.0;
-        const double headerHeight = 53.0; // Padding(16) + Text + Padding(16)
-        const double dividerHeight = 1.0;
-        final double bottomPadding = MediaQuery.of(context).padding.bottom + 8;
-        final double screenHeight = MediaQuery.of(context).size.height;
-
-        final double contentHeight =
-            headerHeight + dividerHeight + (available.length * listTileHeight) + bottomPadding;
-        final double sheetHeight = contentHeight.clamp(0, screenHeight * 0.75);
-
-        return SizedBox(
-          height: sheetHeight,
-          child: Column(
-            children: [
-              const Padding(
-                padding: EdgeInsets.all(16),
-                child: Text(
-                  '선수 선택',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-              ),
-              const Divider(height: 1),
-              Expanded(
-                child: ListView(
-                  padding: EdgeInsets.only(bottom: bottomPadding),
-                  children: available
-                      .map(
-                        (name) => ListTile(
-                          title: Text(name),
-                          onTap: () {
-                            setState(() => team.add(name));
-                            Navigator.pop(context);
-                          },
-                        ),
-                      )
-                      .toList(),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 }
