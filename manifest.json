@@ -1,11 +1,11 @@
 {
-    "name": "shooter_pingpong",
-    "short_name": "shooter_pingpong",
+    "name": "슈터핑퐁",
+    "short_name": "슈터핑퐁",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "슈터 탁구 랭킹 앱",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
