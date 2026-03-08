@@ -1286,8 +1286,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// 5분 이내에 동일한 팀 구성의 경기 기록이 있는지 확인
-  bool _hasDuplicateRecord(
-      List<String> winners, List<String> losers) {
+  bool _hasDuplicateRecord(List<String> winners, List<String> losers) {
     final winSet = winners.where((n) => n.isNotEmpty).toSet();
     final loseSet = losers.where((n) => n.isNotEmpty).toSet();
     final allPlayers = {...winSet, ...loseSet};
@@ -1577,7 +1576,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       onTap: () => setState(() => team.add(name)),
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 8),
+                            horizontal: 15, vertical: 8),
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(20),
