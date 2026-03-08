@@ -1448,74 +1448,99 @@ class _HomeScreenState extends State<HomeScreen> {
         border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-          const SizedBox(height: 8),
-          // 선택된 선수 칩
-          ...team.map(
-            (name) => Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Chip(
-                label: Text(name, style: const TextStyle(fontSize: 12)),
-                deleteIcon:
-                    card.isStarted ? null : const Icon(Icons.close, size: 16),
-                onDeleted: card.isStarted
-                    ? null
-                    : () => setState(() => team.remove(name)),
-                backgroundColor: color.withValues(alpha: 0.15),
-                side: BorderSide(color: color.withValues(alpha: 0.4)),
-                visualDensity: VisualDensity.compact,
+          Center(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: color,
               ),
             ),
           ),
-          // 추가 가능한 선수 인라인 칩
-          if (needMore && availableNames.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Wrap(
-              spacing: 6,
-              runSpacing: 4,
-              alignment: WrapAlignment.center,
-              children: availableNames
-                  .map(
-                    (name) => GestureDetector(
-                      onTap: () => setState(() => team.add(name)),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 5),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                              color: color.withValues(alpha: 0.35)),
-                        ),
-                        child: Text(
-                          name,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: color.withValues(alpha: 0.85),
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
+          const SizedBox(height: 8),
+          // 선택된 선수 - 풀 너비 행
+          ...team.map(
+            (name) => Container(
+              height: 44,
+              margin: const EdgeInsets.only(bottom: 6),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: color.withValues(alpha: 0.5)),
+              ),
+              child: Row(
+                children: [
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      name,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: color,
                       ),
                     ),
-                  )
-                  .toList(),
+                  ),
+                  if (!card.isStarted)
+                    GestureDetector(
+                      onTap: () => setState(() => team.remove(name)),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        child: Icon(Icons.close,
+                            size: 18,
+                            color: color.withValues(alpha: 0.6)),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          // 선택 가능한 선수 - 풀 너비 버튼
+          if (needMore && availableNames.isNotEmpty) ...[
+            if (team.isNotEmpty) const SizedBox(height: 2),
+            ...availableNames.map(
+              (name) => GestureDetector(
+                onTap: () => setState(() => team.add(name)),
+                child: Container(
+                  height: 44,
+                  margin: const EdgeInsets.only(bottom: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: color.withValues(alpha: 0.25)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.add,
+                          size: 16, color: color.withValues(alpha: 0.6)),
+                      const SizedBox(width: 6),
+                      Text(
+                        name,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: color.withValues(alpha: 0.8),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ],
           if (needMore && availableNames.isEmpty)
             Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                '선택 가능한 선수 없음',
-                style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Center(
+                child: Text(
+                  '선택 가능한 선수 없음',
+                  style:
+                      TextStyle(fontSize: 12, color: Colors.grey.shade400),
+                ),
               ),
             ),
         ],
