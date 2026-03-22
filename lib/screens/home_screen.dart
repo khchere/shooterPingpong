@@ -7,6 +7,8 @@ import '../services/sheets_service.dart';
 import 'player_detail_screen.dart';
 
 class _MatchCardData {
+  _MatchCardData();
+
   int matchMode = 0;
   bool isStarted = false;
   bool isSubmitting = false;
@@ -17,6 +19,17 @@ class _MatchCardData {
   int get maxPerTeam => matchMode == 0 ? 2 : 1;
   bool get isTeamReady =>
       teamA.length == maxPerTeam && teamB.length == maxPerTeam;
+
+  /// 다른 카드의 상태를 복사해 새 카드를 생성 (로컬 카드 보존용)
+  factory _MatchCardData.copyFrom(_MatchCardData other) {
+    final copy = _MatchCardData()
+      ..matchMode = other.matchMode
+      ..isStarted = other.isStarted
+      ..rowIndex = other.rowIndex;
+    copy.teamA.addAll(other.teamA);
+    copy.teamB.addAll(other.teamB);
+    return copy;
+  }
 }
 
 class HomeScreen extends StatefulWidget {
@@ -1477,15 +1490,24 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
 
+      // _loadData 전에 다른 로컬 카드 상태 백업
+      // (rowIndex가 없는 카드 = 서버에 저장되지 않은 로컬 카드, 제출 카드 제외)
+      final savedLocalCards = _matchCards
+          .where((c) => c != card && c.rowIndex == null)
+          .map((c) => _MatchCardData.copyFrom(c))
+          .toList();
+
       // _loadData가 _matchCards를 새로 초기화하므로 먼저 await
       await _loadData();
 
-      // 로드 완료 후 A팀 복원
+      // 로드 완료 후 복원
       if (!mounted) return;
-      if (currentPlayerName.isNotEmpty &&
-          _matchCards.isNotEmpty &&
-          _matchCards.length == 1) {
-        setState(() {
+      setState(() {
+        // 백업해둔 로컬 카드 복원
+        _matchCards.addAll(savedLocalCards);
+
+        // A팀 복원 (첫 번째 카드 기준)
+        if (currentPlayerName.isNotEmpty && _matchCards.isNotEmpty) {
           if (currentPlayerWon) {
             // 이긴 경우: 승리팀 전체 유지
             _matchCards[0].teamA
@@ -1497,8 +1519,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ..clear()
               ..add(currentPlayerName);
           }
-        });
-      }
+        }
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() => card.isSubmitting = false);
