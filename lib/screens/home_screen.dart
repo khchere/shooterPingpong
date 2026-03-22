@@ -32,6 +32,21 @@ class _MatchCardData {
   }
 }
 
+/// 홈 프로필 카드 — 당일 경기 한 건
+class _HomeTodayMatch {
+  final String date;
+  final bool isWin;
+  final String partner;
+  final String opponents;
+
+  _HomeTodayMatch({
+    required this.date,
+    required this.isWin,
+    required this.partner,
+    required this.opponents,
+  });
+}
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -355,56 +370,252 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  String _extractDateKey(String date) {
+    final trimmed = date.trim();
+    final parts = trimmed.split('.');
+    if (parts.length >= 3) {
+      final y = parts[0].trim();
+      final m = parts[1].trim();
+      final d = parts[2].trim().split(' ')[0];
+      return '$y.$m.$d';
+    }
+    return trimmed.split(' ').first;
+  }
+
+  Set<String> _todayDateKeys() {
+    final now = DateTime.now();
+    return {
+      '${now.year}.${now.month.toString().padLeft(2, '0')}.${now.day.toString().padLeft(2, '0')}',
+      '${now.year}.${now.month}.${now.day}',
+    };
+  }
+
+  /// 시트 순서(오래된 것 먼저)로 당일 경기만 수집
+  List<_HomeTodayMatch> _todayMatchesChronological(String playerName) {
+    final keys = _todayDateKeys();
+    final out = <_HomeTodayMatch>[];
+    for (final r in _matchRecords) {
+      if (r.isInProgress) continue;
+      final dateKey = _extractDateKey(r.date);
+      if (!keys.contains(dateKey)) continue;
+
+      final winners = [r.winner1, r.winner2].where((n) => n.isNotEmpty).toSet();
+      final losers = [r.loser1, r.loser2].where((n) => n.isNotEmpty).toSet();
+      if (!winners.contains(playerName) && !losers.contains(playerName)) {
+        continue;
+      }
+      final isWin = winners.contains(playerName);
+      final myTeam = isWin ? winners : losers;
+      final opTeam = isWin ? losers : winners;
+      final partner = myTeam.where((n) => n != playerName).join(', ');
+      final opponents = opTeam.join(', ');
+      out.add(_HomeTodayMatch(
+        date: r.date,
+        isWin: isWin,
+        partner: partner,
+        opponents: opponents,
+      ));
+    }
+    return out;
+  }
+
+  String _shortDateLabel(String date) {
+    final parts = date.split('.');
+    if (parts.length >= 3) {
+      final month = parts[1].trim();
+      final dayPart = parts[2].trim().split(' ');
+      return '${month}/${dayPart[0]}';
+    }
+    return date;
+  }
+
+  Widget _buildTodayWlChip(_HomeTodayMatch g) {
+    return Container(
+      width: 28,
+      height: 24,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: g.isWin
+            ? Colors.blue.withValues(alpha: 0.15)
+            : Colors.red.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        g.isWin ? 'W' : 'L',
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+          color: g.isWin ? Colors.blue : Colors.red,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTodayGameDetailRow(_HomeTodayMatch g) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: Colors.grey.shade100, width: 0.5),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: g.isWin
+                  ? Colors.blue.withValues(alpha: 0.1)
+                  : Colors.red.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Center(
+              child: Text(
+                g.isWin ? 'W' : 'L',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: g.isWin ? Colors.blue : Colors.red,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  g.partner.isEmpty
+                      ? 'vs ${g.opponents}'
+                      : '${g.partner}(과) vs ${g.opponents}',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  _shortDateLabel(g.date),
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 프로필 카드 내 당일 경기 (최근경기 UI와 동일 톤, 상세는 ExpansionTile)
+  Widget _buildProfileTodayGames(PlayerStats player) {
+    final chronological = _todayMatchesChronological(player.name);
+    if (chronological.isEmpty) return const SizedBox.shrink();
+
+    // 선수 상세 화면 '최근 경기'와 동일: 최신이 앞(왼쪽)
+    final display = chronological.reversed.toList();
+    final winCount = display.where((g) => g.isWin).length;
+    final loseCount = display.length - winCount;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 12),
+        Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: const EdgeInsets.only(bottom: 4),
+            initiallyExpanded: false,
+            title: Row(
+              children: [
+                const Text(
+                  '오늘 경기',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF1A1A2E),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${display.length}경기 · $winCount승 $loseCount패',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                ),
+              ],
+            ),
+            subtitle: Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: SizedBox(
+                height: 28,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: display.length,
+                  physics: const BouncingScrollPhysics(),
+                  separatorBuilder: (_, __) => const SizedBox(width: 4),
+                  itemBuilder: (context, i) => _buildTodayWlChip(display[i]),
+                ),
+              ),
+            ),
+            children: display.map(_buildTodayGameDetailRow).toList(),
+          ),
+        ),
+      ],
+    );
+  }
+
   // ── Player Card ──
   Widget _buildPlayerCard() {
     if (_playerStats.isEmpty) return const SizedBox.shrink();
 
     final player = _playerStats[_selectedPlayerIndex];
 
-    return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => PlayerDetailScreen(player: player),
-        ),
+    return Container(
+      margin: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
-      child: Container(
-        margin: const EdgeInsets.all(16),
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.06),
-              blurRadius: 10,
-              offset: const Offset(0, 2),
-            ),
-          ],
+      child: GestureDetector(
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => PlayerDetailScreen(player: player),
+          ),
         ),
+        behavior: HitTestBehavior.opaque,
         child: Column(
           children: [
             Row(
               children: [
                 Expanded(
-                  child: Row(
-                    children: [
-                      Text(
-                        player.name,
-                        style: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
+                  child: GestureDetector(
+                    onTap: () => _showPlayerPicker(),
+                    child: Row(
+                      children: [
+                        Text(
+                          player.name,
+                          style: const TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 6),
-                      GestureDetector(
-                        onTap: () {
-                          _showPlayerPicker();
-                        },
-                        child: Icon(Icons.swap_horiz,
+                        const SizedBox(width: 6),
+                        Icon(Icons.arrow_drop_down,
                             size: 22, color: Colors.grey.shade400),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
                 Text(
@@ -439,6 +650,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ],
             ),
+            _buildProfileTodayGames(player),
           ],
         ),
       ),

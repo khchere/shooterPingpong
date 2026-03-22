@@ -19,10 +19,21 @@ class _MatchListScreenState extends State<MatchListScreen> {
     _matchRecords = _sheetsService.fetchMatchRecords();
   }
 
+  /// fetch 완료 후 이미 완료된 Future로 갱신 → Dismissible.confirmDismiss 중
+  /// 리스트가 통째로 로딩 상태로 바뀌며 위젯이 dispose되는 문제를 방지합니다.
   Future<void> _refresh() async {
-    setState(() {
-      _matchRecords = _sheetsService.fetchMatchRecords();
-    });
+    try {
+      final data = await _sheetsService.fetchMatchRecords();
+      if (!mounted) return;
+      setState(() {
+        _matchRecords = Future.value(data);
+      });
+    } catch (e, st) {
+      if (!mounted) return;
+      setState(() {
+        _matchRecords = Future.error(e, st);
+      });
+    }
   }
 
   String _extractDate(String fullDate) {
@@ -111,34 +122,72 @@ class _MatchListScreenState extends State<MatchListScreen> {
 
     if (confirmed != true) return false;
 
+    if (!context.mounted) return false;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      useRootNavigator: true,
+      builder: (dialogContext) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          content: const Row(
+            children: [
+              SizedBox(
+                width: 32,
+                height: 32,
+                child: CircularProgressIndicator(strokeWidth: 3),
+              ),
+              SizedBox(width: 24),
+              Expanded(
+                child: Text(
+                  '삭제 처리 중…',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
     try {
       await _sheetsService.deleteMatchRecord(record.rowIndex);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('기록이 삭제되었습니다'),
-            backgroundColor: Colors.green,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10)),
-          ),
-        );
-        _refresh();
-      }
+      await _refresh();
+      if (!context.mounted) return true;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('기록이 삭제되었습니다'),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
       return true;
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('삭제 실패: $e'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10)),
-          ),
-        );
-      }
+      if (!context.mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('삭제 실패: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
       return false;
+    } finally {
+      if (context.mounted) {
+        final nav = Navigator.of(context, rootNavigator: true);
+        if (nav.canPop()) {
+          nav.pop();
+        }
+      }
     }
   }
 

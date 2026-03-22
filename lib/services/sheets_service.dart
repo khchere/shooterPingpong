@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/match_record.dart';
@@ -214,7 +215,14 @@ class SheetsService {
       'row': rowIndex.toString(),
     });
 
-    final response = await http.get(url);
+    final response = await http.get(url).timeout(
+      const Duration(seconds: 45),
+      onTimeout: () {
+        throw TimeoutException(
+          '삭제 요청 시간 초과(45초). 네트워크 또는 Apps Script 응답을 확인하세요.',
+        );
+      },
+    );
 
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
@@ -333,11 +341,88 @@ class SheetsService {
     return fullDate.split(' ')[0];
   }
 
-  /// 메인 시트에서 베스트/워스트 듀오 데이터를 파싱
-  Future<DuoData> fetchDuoData() async {
-    final rows = await _fetchSheetValues('메인', 'K1:U12');
+  /// 2vs2만: 승팀·패팀 각각의 듀오 조합 키 (이름 정렬 후 "A & B")
+  static String _canonicalDuoTeam(String a, String b) {
+    final names = [a.trim(), b.trim()]..sort();
+    return '${names[0]} & ${names[1]}';
+  }
 
-    List<DuoRecord> _parseDuoSection(
+  /// 1대1(양쪽 모두 단식)은 제외하고, 기록DB에서 2vs2 경기만 집계해
+  /// 함께 출전 횟수 TOP 3 / WORST 3용 [DuoRecord] 생성.
+  ({List<DuoRecord> mostPlayed, List<DuoRecord> leastPlayed})
+      _duoPlayCountsDoublesOnly(List<MatchRecord> records) {
+    final agg = <String, ({int wins, int losses})>{};
+
+    for (final r in records) {
+      if (r.isInProgress) continue;
+      final w1 = r.winner1.trim();
+      final w2 = r.winner2.trim();
+      final l1 = r.loser1.trim();
+      final l2 = r.loser2.trim();
+      // 2vs2만: 네 칸 모두 선수명이 있어야 함
+      if (w1.isEmpty || w2.isEmpty || l1.isEmpty || l2.isEmpty) continue;
+
+      final winTeam = _canonicalDuoTeam(w1, w2);
+      final loseTeam = _canonicalDuoTeam(l1, l2);
+
+      var winEntry = agg[winTeam] ?? (wins: 0, losses: 0);
+      winEntry = (wins: winEntry.wins + 1, losses: winEntry.losses);
+      agg[winTeam] = winEntry;
+
+      var loseEntry = agg[loseTeam] ?? (wins: 0, losses: 0);
+      loseEntry = (wins: loseEntry.wins, losses: loseEntry.losses + 1);
+      agg[loseTeam] = loseEntry;
+    }
+
+    List<DuoRecord> toRecords() {
+      return agg.entries.map((e) {
+        final w = e.value.wins;
+        final l = e.value.losses;
+        final total = w + l;
+        final rate = total == 0
+            ? '0.0%'
+            : '${(w / total * 100).toStringAsFixed(1)}%';
+        return DuoRecord(
+          team: e.key,
+          wins: w,
+          losses: l,
+          winRate: rate,
+          totalGames: total,
+        );
+      }).toList();
+    }
+
+    final list = toRecords()
+      ..sort((a, b) {
+        final t = (b.totalGames ?? 0).compareTo(a.totalGames ?? 0);
+        if (t != 0) return t;
+        return a.team.compareTo(b.team);
+      });
+
+    final mostPlayed = list.take(3).toList();
+
+    final forLeast = List<DuoRecord>.from(list)
+      ..sort((a, b) {
+        final t = (a.totalGames ?? 0).compareTo(b.totalGames ?? 0);
+        if (t != 0) return t;
+        return a.team.compareTo(b.team);
+      });
+    final leastPlayed = forLeast.take(3).toList();
+
+    return (mostPlayed: mostPlayed, leastPlayed: leastPlayed);
+  }
+
+  /// 메인 시트에서 베스트/워스트 듀오 데이터를 파싱.
+  /// 듀오 횟수 TOP/WORST는 시트가 아닌 기록DB의 2vs2만 반영.
+  Future<DuoData> fetchDuoData() async {
+    final results = await Future.wait([
+      _fetchSheetValues('메인', 'K1:U12'),
+      fetchMatchRecords(),
+    ]);
+    final rows = results[0];
+    final matchRecords = results[1] as List<MatchRecord>;
+
+    List<DuoRecord> parseDuoSection(
         List<dynamic> rows, int startRow, int colOffset,
         {bool hasTotal = false}) {
       final results = <DuoRecord>[];
@@ -374,13 +459,15 @@ class SheetsService {
       return results;
     }
 
+    final counts = _duoPlayCountsDoublesOnly(matchRecords);
+
     // L~O (index 1~4): 베스트 듀오 rows 2-4, 워스트 듀오 rows 8-10
-    // Q~U (index 6~10): 듀오 횟수 TOP rows 2-4, WORST rows 8-10
+    // 듀오 횟수 TOP/WORST: 기록DB 2vs2만 사용 (Q~U 시트 구간 무시)
     return DuoData(
-      bestDuos: _parseDuoSection(rows, 2, 1),
-      worstDuos: _parseDuoSection(rows, 8, 1),
-      mostPlayedDuos: _parseDuoSection(rows, 2, 6, hasTotal: true),
-      leastPlayedDuos: _parseDuoSection(rows, 8, 6, hasTotal: true),
+      bestDuos: parseDuoSection(rows, 2, 1),
+      worstDuos: parseDuoSection(rows, 8, 1),
+      mostPlayedDuos: counts.mostPlayed,
+      leastPlayedDuos: counts.leastPlayed,
     );
   }
 
