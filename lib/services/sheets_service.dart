@@ -327,16 +327,18 @@ class SheetsService {
       final losses = lossesMap[name] ?? 0;
       final games = wins + losses;
 
+      final hasRecords = records.isNotEmpty;
+
       stats.add(PlayerStats(
         name: name,
-        totalGames: totalGames,
+        totalGames: hasRecords ? totalGames : 0,
         wins: wins,
         losses: losses,
         winRate: games > 0 ? wins / games * 100 : 0,
         participationRate:
             records.isNotEmpty ? games / records.length * 100 : 0,
-        adjustmentPoints: adjustmentPoints,
-        finalScore: finalScore,
+        adjustmentPoints: hasRecords ? adjustmentPoints : 0,
+        finalScore: hasRecords ? finalScore : 0,
         recentForm: recentForm,
         currentStreak: streakMap[name] ?? 0,
         maxWinStreak: maxWinMap[name] ?? 0,
