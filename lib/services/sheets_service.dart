@@ -293,18 +293,16 @@ class SheetsService {
         final prev = tempStreakMap[name] ?? 0;
         final streak = prev > 0 ? prev + 1 : 1;
         tempStreakMap[name] = streak;
-        maxWinMap[name] = (maxWinMap[name] ?? 0) > streak
-            ? maxWinMap[name]!
-            : streak;
+        maxWinMap[name] =
+            (maxWinMap[name] ?? 0) > streak ? maxWinMap[name]! : streak;
       }
       for (final name in losers) {
         final prev = tempStreakMap[name] ?? 0;
         final streak = prev < 0 ? prev - 1 : -1;
         tempStreakMap[name] = streak;
         final absStreak = streak.abs();
-        maxLoseMap[name] = (maxLoseMap[name] ?? 0) > absStreak
-            ? maxLoseMap[name]!
-            : absStreak;
+        maxLoseMap[name] =
+            (maxLoseMap[name] ?? 0) > absStreak ? maxLoseMap[name]! : absStreak;
       }
     }
     streakMap.addAll(tempStreakMap);
@@ -327,18 +325,16 @@ class SheetsService {
       final losses = lossesMap[name] ?? 0;
       final games = wins + losses;
 
-      final hasRecords = records.isNotEmpty;
-
       stats.add(PlayerStats(
         name: name,
-        totalGames: hasRecords ? totalGames : 0,
+        totalGames: totalGames,
         wins: wins,
         losses: losses,
         winRate: games > 0 ? wins / games * 100 : 0,
         participationRate:
             records.isNotEmpty ? games / records.length * 100 : 0,
-        adjustmentPoints: hasRecords ? adjustmentPoints : 0,
-        finalScore: hasRecords ? finalScore : 0,
+        adjustmentPoints: adjustmentPoints,
+        finalScore: finalScore,
         recentForm: recentForm,
         currentStreak: streakMap[name] ?? 0,
         maxWinStreak: maxWinMap[name] ?? 0,
@@ -400,9 +396,8 @@ class SheetsService {
         final w = e.value.wins;
         final l = e.value.losses;
         final total = w + l;
-        final rate = total == 0
-            ? '0.0%'
-            : '${(w / total * 100).toStringAsFixed(1)}%';
+        final rate =
+            total == 0 ? '0.0%' : '${(w / total * 100).toStringAsFixed(1)}%';
         return DuoRecord(
           team: e.key,
           wins: w,
@@ -594,7 +589,15 @@ class SheetsService {
       }
     }
 
-    const errorValues = {'#VALUE!', '#REF!', '#N/A', '#ERROR!', '#DIV/0!', '#NAME?', '#NULL!'};
+    const errorValues = {
+      '#VALUE!',
+      '#REF!',
+      '#N/A',
+      '#ERROR!',
+      '#DIV/0!',
+      '#NAME?',
+      '#NULL!'
+    };
 
     final scores = <DailyScore>[];
     for (int i = 1; i < rows.length; i++) {

@@ -124,6 +124,17 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  int _countMatchDays() {
+    final dates = <String>{};
+    for (final r in _matchRecords) {
+      final parts = r.date.split('.');
+      if (parts.length >= 3) {
+        dates.add('${parts[0].trim()}.${parts[1].trim()}.${parts[2].trim().split(' ')[0]}');
+      }
+    }
+    return dates.length;
+  }
+
   List<_MatchCardData> _buildInProgressCards(List<MatchRecord> records) {
     final inProgress = records.where((r) => r.isInProgress).toList();
     return inProgress.map((r) {
@@ -274,20 +285,13 @@ class _HomeScreenState extends State<HomeScreen> {
               borderRadius: BorderRadius.circular(14),
             ),
             child: Text(
-              'D+${DateTime.now().difference(DateTime(2025, 1, 5)).inDays}',
+              '2026년시즌2  매치데이 ${_countMatchDays()}',
               style: const TextStyle(
                 color: Colors.white70,
-                fontSize: 13,
+                fontSize: 12,
                 fontWeight: FontWeight.w500,
               ),
             ),
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.white70, size: 22),
-            onPressed: _loadData,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
           ),
           const SizedBox(width: 4),
           PopupMenuButton<String>(
@@ -404,12 +408,14 @@ class _HomeScreenState extends State<HomeScreen> {
           content: const Row(
             children: [
               SizedBox(
-                  width: 32, height: 32,
+                  width: 32,
+                  height: 32,
                   child: CircularProgressIndicator(strokeWidth: 3)),
               SizedBox(width: 24),
               Expanded(
                 child: Text('시즌 아카이브 처리 중…\n잠시 기다려주세요.',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                    style:
+                        TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
               ),
             ],
           ),
@@ -426,7 +432,8 @@ class _HomeScreenState extends State<HomeScreen> {
           content: Text('"$seasonName" 시즌이 아카이브되었습니다. 새 시즌이 시작됩니다!'),
           backgroundColor: Colors.green,
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
       );
       _loadData();
@@ -438,7 +445,8 @@ class _HomeScreenState extends State<HomeScreen> {
           content: Text('아카이브 실패: $e'),
           backgroundColor: Colors.red,
           behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
       );
     }
