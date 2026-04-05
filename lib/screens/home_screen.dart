@@ -289,9 +289,159 @@ class _HomeScreenState extends State<HomeScreen> {
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
           ),
+          const SizedBox(width: 4),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: Colors.white70, size: 22),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            onSelected: (value) {
+              if (value == 'archive') _showArchiveDialog();
+            },
+            itemBuilder: (_) => [
+              const PopupMenuItem(
+                value: 'archive',
+                child: Row(
+                  children: [
+                    Icon(Icons.archive_outlined, size: 20),
+                    SizedBox(width: 8),
+                    Text('시즌 아카이브'),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
+  }
+
+  Future<void> _showArchiveDialog() async {
+    final nameController = TextEditingController(text: '26년시즌2');
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('시즌 아카이브'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '현재까지의 모든 기록을 별도 시즌으로 저장하고,\n랭킹과 기록을 초기화합니다.',
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: nameController,
+              decoration: InputDecoration(
+                labelText: '시즌 이름',
+                hintText: '예: 26년시즌1',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.red.shade200),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded,
+                      size: 18, color: Colors.red.shade700),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '이 작업은 되돌릴 수 없습니다!',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.red.shade700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1A1A2E),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('아카이브 실행'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+    final seasonName = nameController.text.trim();
+    if (seasonName.isEmpty) return;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          content: const Row(
+            children: [
+              SizedBox(
+                  width: 32, height: 32,
+                  child: CircularProgressIndicator(strokeWidth: 3)),
+              SizedBox(width: 24),
+              Expanded(
+                child: Text('시즌 아카이브 처리 중…\n잠시 기다려주세요.',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    try {
+      await _sheetsService.archiveSeason(seasonName);
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('"$seasonName" 시즌이 아카이브되었습니다. 새 시즌이 시작됩니다!'),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+      _loadData();
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('아카이브 실패: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+    }
   }
 
   // ── Rank Change Banner ──

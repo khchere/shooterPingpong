@@ -13,17 +13,29 @@ class _MatchListScreenState extends State<MatchListScreen> {
   final SheetsService _sheetsService = SheetsService();
   late Future<List<MatchRecord>> _matchRecords;
 
+  List<String> _seasons = [];
+  String _selectedSeason = '';
+
   @override
   void initState() {
     super.initState();
+    _loadSeasons();
     _matchRecords = _sheetsService.fetchMatchRecords();
   }
 
-  /// fetch 완료 후 이미 완료된 Future로 갱신 → Dismissible.confirmDismiss 중
-  /// 리스트가 통째로 로딩 상태로 바뀌며 위젯이 dispose되는 문제를 방지합니다.
+  Future<void> _loadSeasons() async {
+    try {
+      final seasons = await _sheetsService.fetchAvailableSeasons();
+      if (!mounted) return;
+      setState(() => _seasons = seasons);
+    } catch (_) {}
+  }
+
   Future<void> _refresh() async {
     try {
-      final data = await _sheetsService.fetchMatchRecords();
+      final data = _selectedSeason.isEmpty
+          ? await _sheetsService.fetchMatchRecords()
+          : await _sheetsService.fetchSeasonRecords(_selectedSeason);
       if (!mounted) return;
       setState(() {
         _matchRecords = Future.value(data);
@@ -34,6 +46,17 @@ class _MatchListScreenState extends State<MatchListScreen> {
         _matchRecords = Future.error(e, st);
       });
     }
+  }
+
+  void _onSeasonChanged(String season) {
+    setState(() {
+      _selectedSeason = season;
+      if (season.isEmpty) {
+        _matchRecords = _sheetsService.fetchMatchRecords();
+      } else {
+        _matchRecords = _sheetsService.fetchSeasonRecords(season);
+      }
+    });
   }
 
   String _extractDate(String fullDate) {
@@ -202,26 +225,50 @@ class _MatchListScreenState extends State<MatchListScreen> {
               top: MediaQuery.of(context).padding.top + 12,
               left: 20,
               right: 20,
-              bottom: 16,
+              bottom: 12,
             ),
             decoration: const BoxDecoration(
               color: Color(0xFF1A1A2E),
             ),
-            child: Row(
+            child: Column(
               children: [
-                const Text(
-                  '전체 기록',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
+                Row(
+                  children: [
+                    const Text(
+                      '전체 기록',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.refresh, color: Colors.white70),
+                      onPressed: _refresh,
+                    ),
+                  ],
+                ),
+                if (_seasons.isNotEmpty)
+                  Container(
+                    margin: const EdgeInsets.only(top: 4),
+                    height: 32,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      children: [
+                        _SeasonChip(
+                          label: '현재 시즌',
+                          isSelected: _selectedSeason.isEmpty,
+                          onTap: () => _onSeasonChanged(''),
+                        ),
+                        ..._seasons.map((s) => _SeasonChip(
+                              label: s,
+                              isSelected: _selectedSeason == s,
+                              onTap: () => _onSeasonChanged(s),
+                            )),
+                      ],
+                    ),
                   ),
-                ),
-                const Spacer(),
-                IconButton(
-                  icon: const Icon(Icons.refresh, color: Colors.white70),
-                  onPressed: _refresh,
-                ),
               ],
             ),
           ),
@@ -280,6 +327,10 @@ class _MatchListScreenState extends State<MatchListScreen> {
                         return _DateHeader(date: item);
                       }
                       final record = item as MatchRecord;
+                      final isArchived = _selectedSeason.isNotEmpty;
+                      if (isArchived) {
+                        return _MatchCard(record: record);
+                      }
                       return Dismissible(
                         key: ValueKey(
                             '${record.rowIndex}_${record.date}'),
@@ -521,6 +572,41 @@ class _MatchCard extends StatelessWidget {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SeasonChip extends StatelessWidget {
+  final String label;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _SeasonChip({
+    required this.label,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(right: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.white : Colors.white.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: isSelected ? const Color(0xFF1A1A2E) : Colors.white70,
+          ),
         ),
       ),
     );

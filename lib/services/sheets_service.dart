@@ -493,6 +493,65 @@ class SheetsService {
     return (date: today.date, rankings: changes);
   }
 
+  /// 시즌 아카이브: 현재 기록을 별도 시트로 복사하고 현재 시트를 초기화
+  Future<void> archiveSeason(String seasonName) async {
+    final url = Uri.parse(_appsScriptUrl).replace(queryParameters: {
+      'action': 'archive_season',
+      'season': seasonName,
+    });
+
+    final response = await http.get(url).timeout(
+      const Duration(seconds: 120),
+      onTimeout: () {
+        throw TimeoutException(
+          '시즌 아카이브 요청 시간 초과. 네트워크 또는 Apps Script 응답을 확인하세요.',
+        );
+      },
+    );
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      if (data['result'] != 'success') {
+        throw Exception('시즌 아카이브 실패: ${data['error'] ?? '알 수 없는 오류'}');
+      }
+    } else {
+      throw Exception('시즌 아카이브 실패: HTTP ${response.statusCode}');
+    }
+  }
+
+  /// 스프레드시트의 전체 시트 목록에서 아카이브된 시즌 목록 조회
+  Future<List<String>> fetchAvailableSeasons() async {
+    final url = Uri.parse(
+      '$_baseUrl/$_spreadsheetId?key=$_apiKey&fields=sheets.properties.title',
+    );
+    final response = await http.get(url);
+    if (response.statusCode != 200) return [];
+
+    final data = json.decode(response.body);
+    final sheets = data['sheets'] as List? ?? [];
+    final seasons = <String>[];
+    for (final sheet in sheets) {
+      final title = sheet['properties']['title'] as String? ?? '';
+      if (title.endsWith('_기록DB')) {
+        seasons.add(title.replaceAll('_기록DB', ''));
+      }
+    }
+    return seasons;
+  }
+
+  /// 특정 시즌의 기록 조회
+  Future<List<MatchRecord>> fetchSeasonRecords(String seasonName) async {
+    final sheetName = '${seasonName}_기록DB';
+    final rows = await _fetchSheetValues(sheetName, 'A2:E');
+    final records = <MatchRecord>[];
+    for (int i = 0; i < rows.length; i++) {
+      final row = rows[i] as List;
+      if (row.isEmpty || row[0].toString().isEmpty) continue;
+      records.add(MatchRecord.fromSheetRow(row, i + 2));
+    }
+    return records;
+  }
+
   /// 일별점수 시트에서 전체 데이터를 가져옴
   Future<({List<String> players, List<DailyScore> scores})>
       fetchDailyScores() async {
