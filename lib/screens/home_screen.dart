@@ -259,43 +259,62 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: EdgeInsets.only(
         top: MediaQuery.of(context).padding.top + 12,
         left: 20,
-        right: 20,
-        bottom: 16,
+        right: 16,
+        bottom: 14,
       ),
-      decoration: const BoxDecoration(
-        color: Color(0xFF1A1A2E),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Row(
         children: [
-          const Icon(Icons.sports_tennis, color: Colors.white, size: 28),
-          const SizedBox(width: 10),
-          const Text(
-            '슈터탁구본부',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1A1A2E),
+              borderRadius: BorderRadius.circular(10),
             ),
+            child: const Icon(Icons.sports_tennis, color: Colors.white, size: 20),
+          ),
+          const SizedBox(width: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '슈터탁구본부',
+                style: TextStyle(
+                  color: Color(0xFF1A1A2E),
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '2026년시즌2 · 매치데이 ${_countMatchDays()}',
+                style: TextStyle(
+                  color: Colors.grey.shade500,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
           ),
           const Spacer(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Text(
-              '2026년시즌2  매치데이 ${_countMatchDays()}',
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
+          IconButton(
+            icon: Icon(Icons.refresh_rounded,
+                color: Colors.grey.shade600, size: 22),
+            onPressed: _loadData,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
           ),
-          const SizedBox(width: 4),
           PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert, color: Colors.white70, size: 22),
+            icon: Icon(Icons.more_vert, color: Colors.grey.shade600, size: 22),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(),
             onSelected: (value) {
