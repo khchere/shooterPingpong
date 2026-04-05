@@ -129,7 +129,8 @@ class _HomeScreenState extends State<HomeScreen> {
     for (final r in _matchRecords) {
       final parts = r.date.split('.');
       if (parts.length >= 3) {
-        dates.add('${parts[0].trim()}.${parts[1].trim()}.${parts[2].trim().split(' ')[0]}');
+        dates.add(
+            '${parts[0].trim()}.${parts[1].trim()}.${parts[2].trim().split(' ')[0]}');
       }
     }
     return dates.length;
@@ -263,7 +264,7 @@ class _HomeScreenState extends State<HomeScreen> {
         bottom: 14,
       ),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Color(0xFF1A1A2E),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.06),
@@ -280,7 +281,8 @@ class _HomeScreenState extends State<HomeScreen> {
               color: const Color(0xFF1A1A2E),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: const Icon(Icons.sports_tennis, color: Colors.white, size: 20),
+            child:
+                const Icon(Icons.sports_tennis, color: Colors.white, size: 20),
           ),
           const SizedBox(width: 10),
           Column(
@@ -289,7 +291,7 @@ class _HomeScreenState extends State<HomeScreen> {
               const Text(
                 '슈터탁구본부',
                 style: TextStyle(
-                  color: Color(0xFF1A1A2E),
+                  color: Colors.white,
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                 ),
