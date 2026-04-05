@@ -308,7 +308,6 @@ class SheetsService {
     streakMap.addAll(tempStreakMap);
 
     final List<PlayerStats> stats = [];
-    final Map<String, int> prevSeasonScoreMap = {};
     final bool hasRecords = records.isNotEmpty;
 
     for (int i = 1; i < mainRows.length; i++) {
@@ -322,8 +321,6 @@ class SheetsService {
       final adjustmentPoints = int.tryParse(row[2].toString()) ?? 0;
       final finalScore = int.tryParse(row[3].toString()) ?? 0;
       final recentForm = row.length > 4 ? row[4].toString() : '';
-
-      prevSeasonScoreMap[name] = finalScore;
 
       final wins = winsMap[name] ?? 0;
       final losses = lossesMap[name] ?? 0;
@@ -345,13 +342,7 @@ class SheetsService {
       ));
     }
 
-    if (hasRecords) {
-      stats.sort((a, b) => b.finalScore.compareTo(a.finalScore));
-    } else {
-      stats.sort((a, b) =>
-          (prevSeasonScoreMap[b.name] ?? 0)
-              .compareTo(prevSeasonScoreMap[a.name] ?? 0));
-    }
+    stats.sort((a, b) => b.finalScore.compareTo(a.finalScore));
     for (int i = 0; i < stats.length; i++) {
       stats[i].rank = i + 1;
     }

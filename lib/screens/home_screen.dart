@@ -97,6 +97,26 @@ class _HomeScreenState extends State<HomeScreen> {
       final prefs = await SharedPreferences.getInstance();
       final savedName = prefs.getString('selected_player');
 
+      final hasAnyScore = stats.any((p) => p.finalScore > 0 || p.wins > 0 || p.losses > 0);
+      if (hasAnyScore) {
+        final rankOrder = stats.map((p) => p.name).toList();
+        await prefs.setStringList('prev_rank_order', rankOrder);
+      } else {
+        final savedOrder = prefs.getStringList('prev_rank_order');
+        if (savedOrder != null && savedOrder.isNotEmpty) {
+          stats.sort((a, b) {
+            final idxA = savedOrder.indexOf(a.name);
+            final idxB = savedOrder.indexOf(b.name);
+            final posA = idxA >= 0 ? idxA : savedOrder.length;
+            final posB = idxB >= 0 ? idxB : savedOrder.length;
+            return posA.compareTo(posB);
+          });
+          for (int i = 0; i < stats.length; i++) {
+            stats[i].rank = i + 1;
+          }
+        }
+      }
+
       final changes = _detectRankChanges(prefs, stats);
 
       final inProgressCards = _buildInProgressCards(inProgressRecords);
