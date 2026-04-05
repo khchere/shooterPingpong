@@ -13,8 +13,10 @@ class PlayerSelectScreen extends StatefulWidget {
 
 class _PlayerSelectScreenState extends State<PlayerSelectScreen> {
   final SheetsService _sheetsService = SheetsService();
+  final TextEditingController _nameController = TextEditingController();
   List<PlayerStats> _players = [];
   bool _isLoading = true;
+  bool _isAdding = false;
   String? _error;
   int? _selectedIndex;
 
@@ -40,6 +42,61 @@ class _PlayerSelectScreenState extends State<PlayerSelectScreen> {
         _error = e.toString();
         _isLoading = false;
       });
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _addPlayer() async {
+    final name = _nameController.text.trim();
+    if (name.isEmpty) return;
+
+    final duplicate = _players.any((p) => p.name == name);
+    if (duplicate) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('"$name" 선수는 이미 등록되어 있습니다'),
+          backgroundColor: Colors.orange,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isAdding = true);
+
+    try {
+      await _sheetsService.addPlayer(name);
+      _nameController.clear();
+      FocusScope.of(context).unfocus();
+      await _loadPlayers();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('"$name" 선수가 등록되었습니다'),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('선수 등록 실패: $e'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isAdding = false);
     }
   }
 
@@ -129,7 +186,7 @@ class _PlayerSelectScreenState extends State<PlayerSelectScreen> {
             ),
             child: ListView.separated(
               padding: const EdgeInsets.symmetric(vertical: 8),
-              itemCount: _players.length,
+              itemCount: _players.length + 1,
               separatorBuilder: (_, __) => Divider(
                 height: 1,
                 indent: 20,
@@ -137,45 +194,125 @@ class _PlayerSelectScreenState extends State<PlayerSelectScreen> {
                 color: Colors.white.withValues(alpha: 0.08),
               ),
               itemBuilder: (context, index) {
-                final player = _players[index];
-                final isSelected = _selectedIndex == index;
-                return ListTile(
-                  onTap: () => setState(() => _selectedIndex = index),
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-                  leading: CircleAvatar(
-                    radius: 22,
-                    backgroundColor: isSelected
-                        ? Colors.amber
-                        : Colors.white.withValues(alpha: 0.12),
-                    child: Text(
-                      '${player.rank}',
-                      style: TextStyle(
-                        color: isSelected ? const Color(0xFF1A1A2E) : Colors.white70,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15,
+                if (index < _players.length) {
+                  final player = _players[index];
+                  final isSelected = _selectedIndex == index;
+                  return ListTile(
+                    onTap: () => setState(() => _selectedIndex = index),
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                    leading: CircleAvatar(
+                      radius: 22,
+                      backgroundColor: isSelected
+                          ? Colors.amber
+                          : Colors.white.withValues(alpha: 0.12),
+                      child: Text(
+                        '${player.rank}',
+                        style: TextStyle(
+                          color: isSelected ? const Color(0xFF1A1A2E) : Colors.white70,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
                       ),
                     ),
-                  ),
-                  title: Text(
-                    player.name,
-                    style: TextStyle(
-                      color: isSelected ? Colors.amber : Colors.white,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 17,
+                    title: Text(
+                      player.name,
+                      style: TextStyle(
+                        color: isSelected ? Colors.amber : Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 17,
+                      ),
                     ),
-                  ),
-                  subtitle: Text(
-                    '${player.wins}승 ${player.losses}패 · 승점 ${player.finalScore}',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.45),
-                      fontSize: 12,
+                    subtitle: Text(
+                      '${player.wins}승 ${player.losses}패 · 승점 ${player.finalScore}',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.45),
+                        fontSize: 12,
+                      ),
                     ),
+                    trailing: isSelected
+                        ? const Icon(Icons.check_circle, color: Colors.amber, size: 28)
+                        : Icon(Icons.circle_outlined,
+                            color: Colors.white.withValues(alpha: 0.2), size: 28),
+                  );
+                }
+
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '새 선수 추가',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.5),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _nameController,
+                              style: const TextStyle(color: Colors.white, fontSize: 15),
+                              decoration: InputDecoration(
+                                hintText: '이름을 입력하세요',
+                                hintStyle: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.25),
+                                  fontSize: 14,
+                                ),
+                                filled: true,
+                                fillColor: Colors.white.withValues(alpha: 0.08),
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 14, vertical: 12),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: BorderSide.none,
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: const BorderSide(
+                                      color: Colors.amber, width: 1.5),
+                                ),
+                              ),
+                              onSubmitted: (_) => _addPlayer(),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          SizedBox(
+                            height: 46,
+                            child: ElevatedButton(
+                              onPressed: _isAdding ? null : _addPlayer,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.amber,
+                                foregroundColor: const Color(0xFF1A1A2E),
+                                disabledBackgroundColor:
+                                    Colors.white.withValues(alpha: 0.1),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                elevation: 0,
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 16),
+                              ),
+                              child: _isAdding
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2))
+                                  : const Text('추가',
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 14)),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                  trailing: isSelected
-                      ? const Icon(Icons.check_circle, color: Colors.amber, size: 28)
-                      : Icon(Icons.circle_outlined,
-                          color: Colors.white.withValues(alpha: 0.2), size: 28),
                 );
               },
             ),

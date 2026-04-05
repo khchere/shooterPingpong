@@ -96,8 +96,7 @@ class _MatchListScreenState extends State<MatchListScreen> {
     return items;
   }
 
-  Future<bool> _confirmDelete(
-      BuildContext context, MatchRecord record) async {
+  Future<bool> _confirmDelete(BuildContext context, MatchRecord record) async {
     final winnerText = record.winner2.isEmpty
         ? record.winner1
         : '${record.winner1} & ${record.winner2}';
@@ -108,16 +107,14 @@ class _MatchListScreenState extends State<MatchListScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('기록 삭제'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(record.date,
-                style: TextStyle(
-                    fontSize: 12, color: Colors.grey.shade600)),
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
             const SizedBox(height: 8),
             Text('승: $winnerText'),
             Text('패: $loserText'),
@@ -332,8 +329,7 @@ class _MatchListScreenState extends State<MatchListScreen> {
                         return _MatchCard(record: record);
                       }
                       return Dismissible(
-                        key: ValueKey(
-                            '${record.rowIndex}_${record.date}'),
+                        key: ValueKey('${record.rowIndex}_${record.date}'),
                         direction: DismissDirection.endToStart,
                         background: Container(
                           alignment: Alignment.centerRight,
@@ -344,11 +340,9 @@ class _MatchListScreenState extends State<MatchListScreen> {
                             color: Colors.red,
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: const Icon(Icons.delete,
-                              color: Colors.white),
+                          child: const Icon(Icons.delete, color: Colors.white),
                         ),
-                        confirmDismiss: (_) =>
-                            _confirmDelete(context, record),
+                        confirmDismiss: (_) => _confirmDelete(context, record),
                         onDismissed: (_) {},
                         child: _MatchCard(record: record),
                       );
@@ -450,8 +444,8 @@ class _MatchCard extends StatelessWidget {
                 if (record.isInProgress) ...[
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
                       color: Colors.orange.shade50,
                       borderRadius: BorderRadius.circular(8),
@@ -597,7 +591,8 @@ class _SeasonChip extends StatelessWidget {
         margin: const EdgeInsets.only(right: 8),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
         decoration: BoxDecoration(
-          color: isSelected ? Colors.white : Colors.white.withValues(alpha: 0.15),
+          color:
+              isSelected ? Colors.white : Colors.white.withValues(alpha: 0.15),
           borderRadius: BorderRadius.circular(16),
         ),
         child: Text(

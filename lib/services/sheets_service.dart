@@ -53,6 +53,25 @@ class SheetsService {
   static const String _appsScriptUrl =
       'https://script.google.com/macros/s/AKfycbyV71nXAFzTY1_Sj-_DnOuCJq1tx1HrrHpRNmtaWZ5R4EITmAXldCCvx4RcFNyuYQEUQQ/exec';
 
+  /// 새 선수를 메인 시트에 등록
+  Future<void> addPlayer(String name) async {
+    final url = Uri.parse(_appsScriptUrl).replace(queryParameters: {
+      'action': 'add_player',
+      'name': name,
+    });
+
+    final response = await http.get(url);
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      if (data['result'] != 'success') {
+        throw Exception('선수 등록 실패: ${data['error'] ?? '알 수 없는 오류'}');
+      }
+    } else {
+      throw Exception('선수 등록 실패: HTTP ${response.statusCode}');
+    }
+  }
+
   /// 경기 결과를 Google Apps Script를 통해 기록DB에 저장 (1v1, 2v2 모두 지원)
   Future<void> submitMatchResult({
     required String winner1,
