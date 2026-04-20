@@ -487,22 +487,29 @@ class SheetsService {
     );
   }
 
-  /// 일별점수 시트에서 마지막 2일치를 가져와 당일 점수 변동을 계산
+  /// 일별점수 시트에서 당일 점수 변동을 계산
+  /// 2일 이상 → 전일 대비 변동, 1일만 → 절대 점수 표시
   Future<({String date, List<MapEntry<String, int>> rankings})>
       fetchDailyRanking() async {
     final result = await fetchDailyScores();
-    if (result.scores.length < 2) {
+    if (result.scores.isEmpty) {
       return (date: '', rankings: <MapEntry<String, int>>[]);
     }
 
     final today = result.scores.last;
-    final yesterday = result.scores[result.scores.length - 2];
-
     final changes = <MapEntry<String, int>>[];
-    for (final player in result.players) {
-      final todayScore = today.scores[player] ?? 0;
-      final yesterdayScore = yesterday.scores[player] ?? 0;
-      changes.add(MapEntry(player, todayScore - yesterdayScore));
+
+    if (result.scores.length >= 2) {
+      final yesterday = result.scores[result.scores.length - 2];
+      for (final player in result.players) {
+        final todayScore = today.scores[player] ?? 0;
+        final yesterdayScore = yesterday.scores[player] ?? 0;
+        changes.add(MapEntry(player, todayScore - yesterdayScore));
+      }
+    } else {
+      for (final player in result.players) {
+        changes.add(MapEntry(player, today.scores[player] ?? 0));
+      }
     }
 
     changes.sort((a, b) => b.value.compareTo(a.value));
