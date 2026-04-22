@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'home_screen.dart';
 import 'duo_screen.dart';
 import 'chart_screen.dart';
+import 'hanmadi_screen.dart';
 import 'match_list_screen.dart';
 
 class MainScaffold extends StatefulWidget {
@@ -13,7 +14,7 @@ class MainScaffold extends StatefulWidget {
 
 class _MainScaffoldState extends State<MainScaffold> {
   int _currentIndex = 0;
-  final List<int> _tabKeys = [0, 0, 0, 0];
+  final List<int> _tabKeys = [0, 0, 0, 0, 0];
 
   Widget _buildScreen(int index) {
     final key = ValueKey('tab_${index}_${_tabKeys[index]}');
@@ -26,6 +27,8 @@ class _MainScaffoldState extends State<MainScaffold> {
         return DuoScreen(key: key);
       case 3:
         return MatchListScreen(key: key);
+      case 4:
+        return HanmadiScreen(key: key);
       default:
         return HomeScreen(key: key);
     }
@@ -71,6 +74,10 @@ class _MainScaffoldState extends State<MainScaffold> {
             BottomNavigationBarItem(
               icon: Icon(Icons.format_list_bulleted_rounded),
               label: '전체 기록',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.forum_outlined),
+              label: '한마디',
             ),
           ],
         ),

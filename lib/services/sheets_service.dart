@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import '../models/hanmadi_post.dart';
 import '../models/match_record.dart';
 import '../models/player_stats.dart';
 
@@ -51,7 +52,7 @@ class SheetsService {
       'https://sheets.googleapis.com/v4/spreadsheets';
 
   static const String _appsScriptUrl =
-      'https://script.google.com/macros/s/AKfycbyV71nXAFzTY1_Sj-_DnOuCJq1tx1HrrHpRNmtaWZ5R4EITmAXldCCvx4RcFNyuYQEUQQ/exec';
+      'https://script.google.com/macros/s/AKfycbwQy-bSMDNm2SdxZAmQnhzlVWX3rliHQjl7ATKRjQTlmp0FjmYMyfWwhhFFUuiQLjNZ/exec';
 
   /// 새 선수를 메인 시트에 등록
   Future<void> addPlayer(String name) async {
@@ -80,6 +81,7 @@ class SheetsService {
     String loser2 = '',
   }) async {
     final url = Uri.parse(_appsScriptUrl).replace(queryParameters: {
+      'action': 'record',
       'winner1': winner1,
       'winner2': winner2,
       'loser1': loser1,
@@ -631,5 +633,158 @@ class SheetsService {
     }
 
     return (players: players, scores: scores);
+  }
+
+  /// 시트가 없거나 권한 오류 시 빈 목록 (한마디 탭은 선택 기능).
+  Future<List<dynamic>> _fetchSheetValuesOrEmpty(
+    String sheetName,
+    String range,
+  ) async {
+    try {
+      return await _fetchSheetValues(sheetName, range);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// `한마디` 시트: A=id, B=작성시각(ISO 권장), C=작성자, D=본문, E=추천수, F=비추천수
+  /// `한마디댓글` 시트: A=글id, B=작성시각, C=작성자, D=댓글본문
+  ///
+  /// A1부터 읽음: 헤더 없이 첫 행부터 글만 넣은 GAS와 1행 헤더 방식 모두 대응.
+  /// (A2만 읽으면 데이터가 1행뿐일 때 첫 글이 목록에서 빠짐)
+  Future<List<HanmadiPost>> fetchHanmadiFeed() async {
+    final postRows = await _fetchSheetValuesOrEmpty('한마디', 'A1:F');
+    final commentRows = await _fetchSheetValuesOrEmpty('한마디댓글', 'A1:D');
+
+    bool isHanmadiPostHeader(List<dynamic> row) {
+      if (row.isEmpty) return true;
+      final a = row[0].toString().trim().toLowerCase();
+      return a == 'id' || a == '#';
+    }
+
+    bool isHanmadiCommentHeader(List<dynamic> row) {
+      if (row.isEmpty) return true;
+      final a = row[0].toString().trim();
+      final lower = a.toLowerCase();
+      return lower == 'postid' || lower == 'id' || a == '글id';
+    }
+
+    final commentsByPost = <String, List<HanmadiComment>>{};
+    for (final raw in commentRows) {
+      final row = raw as List<dynamic>;
+      if (isHanmadiCommentHeader(row)) continue;
+      final c = HanmadiComment.fromSheetRow(row);
+      if (c.postId.isEmpty) continue;
+      commentsByPost.putIfAbsent(c.postId, () => []).add(c);
+    }
+    for (final list in commentsByPost.values) {
+      list.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    }
+
+    final posts = <HanmadiPost>[];
+    for (final raw in postRows) {
+      final row = raw as List<dynamic>;
+      if (isHanmadiPostHeader(row)) continue;
+      final base = HanmadiPost.fromSheetRow(row);
+      if (base.id.isEmpty) continue;
+      final merged = commentsByPost[base.id] ?? const <HanmadiComment>[];
+      posts.add(base.copyWith(comments: merged));
+    }
+
+    posts.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return posts;
+  }
+
+  /// Apps Script에 `action=hanmadi_post` 처리 추가 필요: 행 append 및 id·시각 기록
+  Future<void> addHanmadiPost({
+    required String author,
+    required String body,
+  }) async {
+    final url = Uri.parse(_appsScriptUrl).replace(queryParameters: {
+      'action': 'hanmadi_post',
+      'author': author,
+      'body': body,
+    });
+
+    final response = await http.get(url);
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      if (data['result'] != 'success') {
+        throw Exception(data['error']?.toString() ?? '한마디 등록 실패');
+      }
+    } else {
+      throw Exception('한마디 등록 실패: HTTP ${response.statusCode}');
+    }
+  }
+
+  /// `action=hanmadi_comment`
+  Future<void> addHanmadiComment({
+    required String postId,
+    required String author,
+    required String body,
+  }) async {
+    final url = Uri.parse(_appsScriptUrl).replace(queryParameters: {
+      'action': 'hanmadi_comment',
+      'postId': postId,
+      'author': author,
+      'body': body,
+    });
+
+    final response = await http.get(url);
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      if (data['result'] != 'success') {
+        throw Exception(data['error']?.toString() ?? '댓글 등록 실패');
+      }
+    } else {
+      throw Exception('댓글 등록 실패: HTTP ${response.statusCode}');
+    }
+  }
+
+  /// `action=hanmadi_vote` — vote: `like` | `dislike` | `none`(취소)
+  /// GAS에서 동일 postId+voter 조합 중복을 막고 시트의 추천/비추천 수를 갱신하는 것을 권장
+  Future<void> submitHanmadiVote({
+    required String postId,
+    required String voter,
+    required String vote,
+  }) async {
+    final url = Uri.parse(_appsScriptUrl).replace(queryParameters: {
+      'action': 'hanmadi_vote',
+      'postId': postId,
+      'voter': voter,
+      'vote': vote,
+    });
+
+    final response = await http.get(url);
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      if (data['result'] != 'success') {
+        throw Exception(data['error']?.toString() ?? '추천 반영 실패');
+      }
+    } else {
+      throw Exception('추천 반영 실패: HTTP ${response.statusCode}');
+    }
+  }
+
+  /// `action=hanmadi_delete_post` — GAS에서 postId 행의 작성자(C열)와 requester 일치 시만 삭제
+  Future<void> deleteHanmadiPost({
+    required String postId,
+    required String requester,
+  }) async {
+    final url = Uri.parse(_appsScriptUrl).replace(queryParameters: {
+      'action': 'hanmadi_delete_post',
+      'postId': postId,
+      'requester': requester,
+    });
+
+    final response = await http.get(url);
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      if (data['result'] != 'success') {
+        throw Exception(data['error']?.toString() ?? '글 삭제 실패');
+      }
+    } else {
+      throw Exception('글 삭제 실패: HTTP ${response.statusCode}');
+    }
   }
 }
