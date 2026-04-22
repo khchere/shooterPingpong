@@ -589,129 +589,159 @@ class _HanmadiScreenState extends State<HanmadiScreen> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.grey.shade100,
-      appBar: AppBar(
-        title: const Text('한마디'),
-        backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFF1A1A2E),
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        actions: [
+  Widget _buildHeader() {
+    return Container(
+      padding: EdgeInsets.only(
+        top: MediaQuery.of(context).padding.top + 12,
+        left: 20,
+        right: 20,
+        bottom: 16,
+      ),
+      decoration: const BoxDecoration(color: Color(0xFF1A1A2E)),
+      child: Row(
+        children: [
+          const Text(
+            '한마디',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const Spacer(),
           IconButton(
-            icon: const Icon(Icons.refresh_rounded),
+            icon: const Icon(Icons.refresh, color: Colors.white70, size: 22),
             onPressed: _loading
                 ? null
                 : () => _reloadPosts(
                       withBlockingSpinner: _posts.isEmpty,
                     ),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
           ),
         ],
       ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey.shade100,
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _loading ? null : _openWriteSheet,
-        backgroundColor: const Color(0xFF1A1A2E),
-        foregroundColor: Colors.white,
+        backgroundColor: Colors.white,
+        foregroundColor: const Color(0xFF1A1A2E),
         icon: const Icon(Icons.edit_rounded),
         label: const Text('글쓰기'),
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: () => _reloadPosts(withBlockingSpinner: false),
-              child: _posts.isEmpty
-                  ? ListView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      children: [
-                        SizedBox(
-                          height: MediaQuery.sizeOf(context).height * 0.35,
-                        ),
-                        Center(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 32),
-                            child: Text(
-                              '아직 글이 없습니다.\n스프레드시트에 시트 이름「한마디」「한마디댓글」을 만들고\nApps Script에 hanmadi_post 등 액션을 연결해 주세요.',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: Colors.grey.shade600,
-                                height: 1.45,
+      body: Column(
+        children: [
+          _buildHeader(),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : RefreshIndicator(
+                    onRefresh: () => _reloadPosts(withBlockingSpinner: false),
+                    child: _posts.isEmpty
+                        ? ListView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            children: [
+                              SizedBox(
+                                height:
+                                    MediaQuery.sizeOf(context).height * 0.35,
                               ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    )
-                  : ListView.builder(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 88),
-                      itemCount: _posts.length,
-                      itemBuilder: (context, index) {
-                        final post = _posts[index];
-                        return Card(
-                          margin: const EdgeInsets.only(bottom: 10),
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                            side: BorderSide(color: Colors.grey.shade200),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        post.author,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 15,
-                                          color: Color(0xFF1A1A2E),
-                                        ),
-                                      ),
+                              Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 32,
+                                  ),
+                                  child: Text(
+                                    '아직 글이 없습니다.\n스프레드시트에 시트 이름「한마디」「한마디댓글」을 만들고\nApps Script에 hanmadi_post 등 액션을 연결해 주세요.',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: Colors.grey.shade600,
+                                      height: 1.45,
                                     ),
-                                    Text(
-                                      post.createdAt,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey.shade600,
-                                      ),
-                                    ),
-                                    if (_isMyPost(post)) ...[
-                                      const SizedBox(width: 4),
-                                      if (_deletingPostIds.contains(post.id))
-                                        const SizedBox(
-                                          width: 28,
-                                          height: 28,
-                                          child: Padding(
-                                            padding: EdgeInsets.all(4),
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          )
+                        : ListView.builder(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            padding: const EdgeInsets.fromLTRB(12, 12, 12, 88),
+                            itemCount: _posts.length,
+                            itemBuilder: (context, index) {
+                              final post = _posts[index];
+                              return Card(
+                                color: Colors.white,
+                                margin: const EdgeInsets.only(bottom: 10),
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                  side: BorderSide(color: Colors.grey.shade200),
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(16),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              post.author,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 15,
+                                                color: Color(0xFF1A1A2E),
+                                              ),
                                             ),
                                           ),
-                                        )
-                                      else
-                                        IconButton(
-                                          onPressed: () =>
-                                              _confirmDeletePost(post),
-                                          icon: const Icon(
-                                            Icons.delete_outline_rounded,
-                                            size: 22,
+                                          Text(
+                                            post.createdAt,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey.shade600,
+                                            ),
                                           ),
-                                          color: Colors.grey.shade600,
-                                          tooltip: '글 삭제',
-                                          constraints: const BoxConstraints(
-                                            minWidth: 36,
-                                            minHeight: 36,
-                                          ),
-                                          padding: EdgeInsets.zero,
-                                        ),
-                                    ],
-                                  ],
-                                ),
+                                          if (_isMyPost(post)) ...[
+                                            const SizedBox(width: 4),
+                                            if (_deletingPostIds
+                                                .contains(post.id))
+                                              const SizedBox(
+                                                width: 28,
+                                                height: 28,
+                                                child: Padding(
+                                                  padding: EdgeInsets.all(4),
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                    strokeWidth: 2,
+                                                  ),
+                                                ),
+                                              )
+                                            else
+                                              IconButton(
+                                                onPressed: () =>
+                                                    _confirmDeletePost(post),
+                                                icon: const Icon(
+                                                  Icons.delete_outline_rounded,
+                                                  size: 22,
+                                                ),
+                                                color: Colors.grey.shade600,
+                                                tooltip: '글 삭제',
+                                                constraints:
+                                                    const BoxConstraints(
+                                                  minWidth: 36,
+                                                  minHeight: 36,
+                                                ),
+                                                padding: EdgeInsets.zero,
+                                              ),
+                                          ],
+                                        ],
+                                      ),
                                 const SizedBox(height: 10),
                                 Text(
                                   post.body,
@@ -818,6 +848,9 @@ class _HanmadiScreenState extends State<HanmadiScreen> {
                         );
                       },
                     ),
+                  ),
+                ),
+              ],
             ),
     );
   }
