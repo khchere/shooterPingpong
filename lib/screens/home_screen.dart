@@ -68,6 +68,8 @@ class _HomeScreenState extends State<HomeScreen> {
   List<String> _rankChanges = [];
   bool _bannerDismissed = false;
   List<MatchRecord> _matchRecords = [];
+  /// 현재 시즌 기록DB + 아카이브 시즌 기록(통합). 예상 승률(조합 간 대전)에만 사용.
+  List<MatchRecord> _allMatchHistoryForPrediction = [];
 
   @override
   void initState() {
@@ -93,6 +95,15 @@ class _HomeScreenState extends State<HomeScreen> {
           results[1] as ({String date, List<MapEntry<String, int>> rankings});
       final inProgressRecords = results[2] as List<MatchRecord>;
       final allRecords = results[3] as List<MatchRecord>;
+
+      final seasons = await _sheetsService.fetchAvailableSeasons();
+      final archivedLists = await Future.wait(
+        seasons.map(_sheetsService.fetchSeasonRecords),
+      );
+      final mergedHistory = <MatchRecord>[...allRecords];
+      for (final list in archivedLists) {
+        mergedHistory.addAll(list);
+      }
 
       final prefs = await SharedPreferences.getInstance();
       final savedName = prefs.getString('selected_player');
@@ -128,6 +139,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _rankChanges = changes;
         _bannerDismissed = false;
         _matchRecords = allRecords;
+        _allMatchHistoryForPrediction = mergedHistory;
         _matchCards =
             inProgressCards.isNotEmpty ? inProgressCards : [_MatchCardData()];
         if (savedName != null) {
@@ -140,6 +152,7 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _error = e.toString();
         _isLoading = false;
+        _allMatchHistoryForPrediction = [];
       });
     }
   }
@@ -1262,6 +1275,53 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ── Match Cards ──
+  /// 복식: 이름 정렬 후 `A & B`, 단식: 한 명 이름.
+  String _canonicalTeamKey(List<String> team) {
+    final names =
+        team.map((e) => e.trim()).where((e) => e.isNotEmpty).toList()..sort();
+    if (names.isEmpty) return '';
+    if (names.length == 1) return names[0];
+    return '${names[0]} & ${names[1]}';
+  }
+
+  bool _isDoublesRecord(MatchRecord r) {
+    if (r.isInProgress) return false;
+    return r.winner2.trim().isNotEmpty &&
+        r.loser2.trim().isNotEmpty &&
+        r.winner1.trim().isNotEmpty &&
+        r.loser1.trim().isNotEmpty;
+  }
+
+  bool _isSinglesRecord(MatchRecord r) {
+    if (r.isInProgress) return false;
+    return r.winner2.trim().isEmpty &&
+        r.loser2.trim().isEmpty &&
+        r.winner1.trim().isNotEmpty &&
+        r.loser1.trim().isNotEmpty;
+  }
+
+  String _pairKey(String a, String b) {
+    final p1 = a.trim();
+    final p2 = b.trim();
+    if (p1.isEmpty && p2.isEmpty) return '';
+    if (p1.isEmpty) return p2;
+    if (p2.isEmpty) return p1;
+    final pair = [p1, p2]..sort();
+    return '${pair[0]} & ${pair[1]}';
+  }
+
+  String? _recordWinnerTeamKey(MatchRecord r) {
+    if (_isDoublesRecord(r)) return _pairKey(r.winner1, r.winner2);
+    if (_isSinglesRecord(r)) return r.winner1.trim();
+    return null;
+  }
+
+  String? _recordLoserTeamKey(MatchRecord r) {
+    if (_isDoublesRecord(r)) return _pairKey(r.loser1, r.loser2);
+    if (_isSinglesRecord(r)) return r.loser1.trim();
+    return null;
+  }
+
   double _teamWinRate(List<String> team) {
     if (team.isEmpty) return 50;
     double sum = 0;
@@ -1276,21 +1336,102 @@ class _HomeScreenState extends State<HomeScreen> {
     return count > 0 ? sum / count : 50;
   }
 
-  ({double teamA, double teamB}) _predictWinRate(_MatchCardData card) {
-    final rateA = _teamWinRate(card.teamA);
-    final rateB = _teamWinRate(card.teamB);
-    final total = rateA + rateB;
-    if (total == 0) return (teamA: 50, teamB: 50);
+  /// 예상 승률 + 직접 대전 전적(있으면). 대전 0건이면 개인 통산 승률 평균으로 비율만 추정.
+  ({
+    double teamA,
+    double teamB,
+    int h2hAWins,
+    int h2hBWins,
+    bool usedHeadToHead,
+  }) _matchWinPrediction(_MatchCardData card) {
+    if (!card.isTeamReady) {
+      return (
+        teamA: 50,
+        teamB: 50,
+        h2hAWins: 0,
+        h2hBWins: 0,
+        usedHeadToHead: false,
+      );
+    }
+
+    final keyA = _canonicalTeamKey(card.teamA);
+    final keyB = _canonicalTeamKey(card.teamB);
+    if (keyA.isEmpty || keyB.isEmpty || keyA == keyB) {
+      return (
+        teamA: 50,
+        teamB: 50,
+        h2hAWins: 0,
+        h2hBWins: 0,
+        usedHeadToHead: false,
+      );
+    }
+
+    final wantDoubles = card.matchMode == 0;
+    var aWins = 0;
+    var bWins = 0;
+
+    for (final r in _allMatchHistoryForPrediction) {
+      if (wantDoubles) {
+        if (!_isDoublesRecord(r)) continue;
+      } else {
+        if (!_isSinglesRecord(r)) continue;
+      }
+
+      final wk = _recordWinnerTeamKey(r);
+      final lk = _recordLoserTeamKey(r);
+      if (wk == null || lk == null) continue;
+
+      if (wk == keyA && lk == keyB) {
+        aWins++;
+      } else if (wk == keyB && lk == keyA) {
+        bWins++;
+      }
+    }
+
+    final totalGames = aWins + bWins;
+    if (totalGames == 0) {
+      final rateA = _teamWinRate(card.teamA);
+      final rateB = _teamWinRate(card.teamB);
+      final sum = rateA + rateB;
+      if (sum == 0) {
+        return (
+          teamA: 50,
+          teamB: 50,
+          h2hAWins: 0,
+          h2hBWins: 0,
+          usedHeadToHead: false,
+        );
+      }
+      return (
+        teamA: (rateA / sum * 100),
+        teamB: (rateB / sum * 100),
+        h2hAWins: 0,
+        h2hBWins: 0,
+        usedHeadToHead: false,
+      );
+    }
+
+    const k = 1.0;
+    final aPct = (aWins + k) / (totalGames + 2 * k) * 100;
+    final bPct = (bWins + k) / (totalGames + 2 * k) * 100;
     return (
-      teamA: (rateA / total * 100),
-      teamB: (rateB / total * 100),
+      teamA: aPct,
+      teamB: bPct,
+      h2hAWins: aWins,
+      h2hBWins: bWins,
+      usedHeadToHead: true,
     );
   }
 
   Widget _buildPrediction(_MatchCardData card) {
-    final pred = _predictWinRate(card);
+    final pred = _matchWinPrediction(card);
     final aWin = pred.teamA;
     final bWin = pred.teamB;
+    final totalH2h = pred.h2hAWins + pred.h2hBWins;
+    final recordText = pred.usedHeadToHead && totalH2h > 0
+        ? '직접 전적  A ${pred.h2hAWins}승 ${pred.h2hBWins}패  ·  '
+            'B ${pred.h2hBWins}승 ${pred.h2hAWins}패  (총 $totalH2h경기, 아카이브 시즌 포함)'
+        : '동일 조합 직접 대전 없음 · 개인 통산 승률로 비율 추정';
 
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
@@ -1308,6 +1449,15 @@ class _HomeScreenState extends State<HomeScreen> {
               color: Colors.grey.shade500,
               fontWeight: FontWeight.w500,
             ),
+          ),
+          Text(
+            recordText,
+            style: TextStyle(
+              fontSize: 10,
+              height: 1.35,
+              color: Colors.grey.shade600,
+            ),
+            textAlign: TextAlign.center,
           ),
           const SizedBox(height: 8),
           Row(
