@@ -76,7 +76,7 @@ class SheetsService {
     name: '슈터탁구본부',
     spreadsheetId: '1dtlIlaNiLkh8s6-qTApfCTuNqGAR2NbMKGP1EsM_CS0',
     appsScriptUrl:
-        'https://script.google.com/macros/s/AKfycbwThyommHjU3ii0MY4QSXchjZvgw4vo6a65V-Vzvwij9qf90FNK6kPEDCPKSFQ45klOYg/exec',
+        'https://script.google.com/macros/s/AKfycbxMhse8TrVTe9uMeFplnb1CfpGT-7ZMDsnRVCpA1MFrQgDzM62SuJk3I0Eeqq0qQpa40g/exec',
   );
 
   static const _workspacesKey = 'sheet_workspaces_v1';
@@ -223,6 +223,7 @@ class SheetsService {
     String winner2 = '',
     required String loser1,
     String loser2 = '',
+    String recorder = '',
   }) async {
     final url = _scriptUri({
       'action': 'record',
@@ -230,6 +231,7 @@ class SheetsService {
       'winner2': winner2,
       'loser1': loser1,
       'loser2': loser2,
+      'recorder': recorder,
     });
 
     final response = await http.get(url);
@@ -274,7 +276,7 @@ class SheetsService {
     }
   }
 
-  static String get _recordsCacheKey => 'records_cache_v1_$_spreadsheetId';
+  static String get _recordsCacheKey => 'records_cache_v2_$_spreadsheetId';
   /// 오늘 포함 최근 며칠은 항상 시트에서 읽을지 (그 이전 기록만 로컬 캐시 사용)
   static const _freshDays = 3;
   static List<MatchRecord>? _recordsMem;
@@ -292,7 +294,7 @@ class SheetsService {
   }
 
   Future<List<MatchRecord>> _fetchAllRecords() async {
-    final rows = await _fetchSheetValues('기록DB', 'A2:E');
+    final rows = await _fetchSheetValues('기록DB', 'A2:F');
     final records = <MatchRecord>[];
     for (int i = 0; i < rows.length; i++) {
       final row = rows[i] as List;
@@ -323,7 +325,7 @@ class SheetsService {
 
     // 경계 행(캐시의 firstFresh-1 번째 = 시트 firstFresh+1 행)부터 끝까지
     final boundaryRow = firstFresh + 1;
-    final rows = await _fetchSheetValues('기록DB', 'A$boundaryRow:E');
+    final rows = await _fetchSheetValues('기록DB', 'A$boundaryRow:F');
     if (rows.isEmpty || !_sameRow(rows[0] as List, cached[firstFresh - 1])) {
       return _fetchAllRecords();
     }
@@ -449,6 +451,7 @@ class SheetsService {
     String winner2 = '',
     required String loser1,
     String loser2 = '',
+    String recorder = '',
   }) async {
     final url = _scriptUri({
       'action': 'complete',
@@ -457,6 +460,7 @@ class SheetsService {
       'winner2': winner2,
       'loser1': loser1,
       'loser2': loser2,
+      'recorder': recorder,
     });
 
     final response = await http.get(url);
@@ -915,7 +919,7 @@ class SheetsService {
   /// 아카이브된 전 시즌 기록(통합). 아카이브는 바뀌지 않으므로 폰에 저장해두고
   /// 바로 쓰고, 시즌 목록만 백그라운드로 확인해 새 시즌이 생겼을 때만 다시 읽는다.
   /// 실패 시 빈 목록(보조 데이터라 화면을 막지 않음).
-  static String get _archiveCacheKey => 'archive_cache_v1_$_spreadsheetId';
+  static String get _archiveCacheKey => 'archive_cache_v2_$_spreadsheetId';
   static List<MatchRecord>? _archivedRecordsCache;
   static List<String>? _archivedSeasons;
 
@@ -995,7 +999,7 @@ class SheetsService {
   /// 특정 시즌의 기록 조회
   Future<List<MatchRecord>> fetchSeasonRecords(String seasonName) async {
     final sheetName = '${seasonName}_기록DB';
-    final rows = await _fetchSheetValues(sheetName, 'A2:E');
+    final rows = await _fetchSheetValues(sheetName, 'A2:F');
     final records = <MatchRecord>[];
     for (int i = 0; i < rows.length; i++) {
       final row = rows[i] as List;

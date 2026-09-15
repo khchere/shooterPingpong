@@ -2293,8 +2293,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// [records]에서 5분 이내 동일 팀 구성(팀 순서·승패 무관) 기록을 찾아
-  /// 가장 최근 것의 경과 시간(초)을 돌려준다. 없으면 null.
-  int? _recentDuplicateSeconds(
+  /// 가장 최근 것의 경과 시간(초)과 승패까지 같은지를 돌려준다. 없으면 null.
+  ({int seconds, bool sameResult})? _recentDuplicate(
       List<MatchRecord> records, List<String> winners, List<String> losers) {
     final winSet = winners.where((n) => n.isNotEmpty).toSet();
     final loseSet = losers.where((n) => n.isNotEmpty).toSet();
@@ -2314,11 +2314,16 @@ class _HomeScreenState extends State<HomeScreen> {
       final rAllPlayers = {...rWinSet, ...rLoseSet};
 
       // 팀 구성이 동일한지 확인 (팀 순서 무관)
-      if (rAllPlayers.length == allPlayers.length &&
-          rAllPlayers.containsAll(allPlayers) &&
-          ((rWinSet.containsAll(winSet) && rLoseSet.containsAll(loseSet)) ||
-              (rWinSet.containsAll(loseSet) && rLoseSet.containsAll(winSet)))) {
-        return elapsedSeconds;
+      if (rAllPlayers.length != allPlayers.length ||
+          !rAllPlayers.containsAll(allPlayers)) {
+        continue;
+      }
+      final sameResult =
+          rWinSet.containsAll(winSet) && rLoseSet.containsAll(loseSet);
+      final swapped =
+          rWinSet.containsAll(loseSet) && rLoseSet.containsAll(winSet);
+      if (sameResult || swapped) {
+        return (seconds: elapsedSeconds, sameResult: sameResult);
       }
     }
     return null;
@@ -2369,16 +2374,16 @@ class _HomeScreenState extends State<HomeScreen> {
       latestRecords = _matchRecords;
     }
     if (!mounted) return;
-    final duplicateSeconds =
-        _recentDuplicateSeconds(latestRecords, winners, losers);
+    final duplicate = _recentDuplicate(latestRecords, winners, losers);
 
-    // 30초 이내 동일 팀 구성 기록이 있으면 차단 (연타·실수 방지)
-    if (duplicateSeconds != null && duplicateSeconds < 30) {
+    // 30초 이내 같은 조합·같은 승패 기록이 있으면 차단 (연타·실수 방지).
+    // 승패가 반대인 기록은 정상 경기일 수 있으므로 아래 5분 경고만 띄운다.
+    if (duplicate != null && duplicate.sameResult && duplicate.seconds < 30) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '같은 조합이 $duplicateSeconds초 전에 저장되었습니다. '
-            '${30 - duplicateSeconds}초 후 다시 시도하세요',
+            '같은 결과가 ${duplicate.seconds}초 전에 저장되었습니다. '
+            '${30 - duplicate.seconds}초 후 다시 시도하세요',
           ),
           backgroundColor: Colors.orange.shade700,
           behavior: SnackBarBehavior.floating,
@@ -2390,7 +2395,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     // 5분 이내 동일 팀 구성 기록 존재 시 경고 얼럿
-    if (duplicateSeconds != null) {
+    if (duplicate != null) {
       final proceed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -2526,6 +2531,7 @@ class _HomeScreenState extends State<HomeScreen> {
             winner2: gw2,
             loser1: gl1,
             loser2: gl2,
+            recorder: currentPlayerName,
           );
         } else {
           await _sheetsService.submitMatchResult(
@@ -2533,6 +2539,7 @@ class _HomeScreenState extends State<HomeScreen> {
             winner2: gw2,
             loser1: gl1,
             loser2: gl2,
+            recorder: currentPlayerName,
           );
         }
         savedRecords.add(MatchRecord(
@@ -2542,6 +2549,7 @@ class _HomeScreenState extends State<HomeScreen> {
           winner2: gw2,
           loser1: gl1,
           loser2: gl2,
+          recorder: currentPlayerName,
         ));
       }
 

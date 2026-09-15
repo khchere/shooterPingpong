@@ -441,6 +441,16 @@ class _MatchCard extends StatelessWidget {
                     color: Colors.grey.shade600,
                   ),
                 ),
+                if (record.recorder.isNotEmpty) ...[
+                  const SizedBox(width: 6),
+                  Text(
+                    '· 기입 ${record.recorder}',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Colors.grey.shade400,
+                    ),
+                  ),
+                ],
                 if (record.isInProgress) ...[
                   const SizedBox(width: 8),
                   Container(
