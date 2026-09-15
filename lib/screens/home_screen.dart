@@ -5,6 +5,7 @@ import '../models/match_record.dart';
 import '../models/player_stats.dart';
 import '../models/sheet_workspace.dart';
 import '../services/sheets_service.dart';
+import '../services/voice_input.dart';
 import 'main_scaffold.dart';
 import 'player_detail_screen.dart';
 import 'player_select_screen.dart';
@@ -62,6 +63,8 @@ class _HomeScreenState extends State<HomeScreen> {
   int _rankingTab = 0;
   /// 경기 기록 선수 칩 정렬: true = 가나다 순, false = 랭킹 순
   bool _sortByName = true;
+  /// 음성 입력 듣는 중인 카드 index (없으면 null)
+  int? _listeningCardIndex;
   List<_MatchCardData> _matchCards = [_MatchCardData()];
   List<String> _rankChanges = [];
   bool _bannerDismissed = false;
@@ -1814,6 +1817,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(width: 8),
                 _buildSortOption('랭킹 순', false),
               ],
+              if (!card.isStarted && VoiceInput.isSupported) ...[
+                const SizedBox(width: 8),
+                _buildVoiceButton(cardIndex),
+              ],
               if (card.isStarted) ...[
                 const SizedBox(width: 8),
                 Container(
@@ -2172,6 +2179,118 @@ class _HomeScreenState extends State<HomeScreen> {
             fontWeight: FontWeight.bold,
           ),
         ),
+      ),
+    );
+  }
+
+  // ── 음성 입력 ──
+  /// 마이크 버튼. 누르면 한 문장을 듣고 "승자 승자 패자 패자" 순으로 카드에 채운다.
+  Widget _buildVoiceButton(int cardIndex) {
+    final listening = _listeningCardIndex == cardIndex;
+    return GestureDetector(
+      onTap: () => listening ? VoiceInput.stop() : _startVoiceInput(cardIndex),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: listening ? Colors.red.shade50 : Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+              color: listening ? Colors.red.shade300 : Colors.grey.shade300),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              listening ? Icons.mic : Icons.mic_none,
+              size: 16,
+              color: listening ? Colors.red : Colors.grey.shade700,
+            ),
+            const SizedBox(width: 3),
+            Text(
+              listening ? '듣는 중…' : '음성',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: listening ? Colors.red : Colors.grey.shade700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _startVoiceInput(int cardIndex) async {
+    if (_listeningCardIndex != null) return;
+    setState(() => _listeningCardIndex = cardIndex);
+    final alternatives = await VoiceInput.listen();
+    if (!mounted) return;
+    setState(() => _listeningCardIndex = null);
+
+    if (alternatives.isEmpty) {
+      _showVoiceMessage('음성을 인식하지 못했습니다. 다시 시도하세요', error: true);
+      return;
+    }
+
+    // 후보 중 선수 이름이 가장 많이 잡힌 것을 사용
+    final names = _playerStats.map((p) => p.name).toList();
+    List<String> best = [];
+    for (final text in alternatives) {
+      final found = _matchPlayerNames(text, names);
+      if (found.length > best.length) best = found;
+      if (best.length == 4) break;
+    }
+
+    if (best.length != 2 && best.length != 4) {
+      _showVoiceMessage(
+        '인식: "${alternatives.first}"\n선수 ${best.length}명만 찾았습니다. '
+        '"승자 승자 패자 패자" 순으로 말해주세요',
+        error: true,
+      );
+      return;
+    }
+
+    if (cardIndex >= _matchCards.length) return;
+    final card = _matchCards[cardIndex];
+    final half = best.length ~/ 2;
+    setState(() {
+      card.matchMode = best.length == 4 ? 0 : 1;
+      card.teamA
+        ..clear()
+        ..addAll(best.take(half));
+      card.teamB
+        ..clear()
+        ..addAll(best.skip(half));
+    });
+    _showVoiceMessage(
+      '${card.teamA.join(', ')} 승 · ${card.teamB.join(', ')} 패 — '
+      '맞으면 "${card.teamA.join(', ')} 승리"를 눌러 저장',
+    );
+  }
+
+  /// 인식 문장에서 선수 이름을 등장 순서대로 추출.
+  /// 성 포함 전체 이름 또는 이름 두 글자("이선범"/"선범") 모두 허용, 중복 제외.
+  List<String> _matchPlayerNames(String text, List<String> names) {
+    final compact = text.replaceAll(RegExp(r'[\s,.\-/]'), '');
+    final hits = <({int pos, String name})>[];
+    for (final name in names) {
+      final given = name.length >= 3 ? name.substring(name.length - 2) : name;
+      var pos = compact.indexOf(name);
+      if (pos < 0) pos = compact.indexOf(given);
+      if (pos >= 0) hits.add((pos: pos, name: name));
+    }
+    hits.sort((a, b) => a.pos.compareTo(b.pos));
+    return [for (final h in hits) h.name];
+  }
+
+  void _showVoiceMessage(String text, {bool error = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(text),
+        backgroundColor: error ? Colors.orange.shade700 : Colors.blueGrey.shade700,
+        duration: const Duration(seconds: 4),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
   }
