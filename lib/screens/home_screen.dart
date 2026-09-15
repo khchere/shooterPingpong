@@ -3,8 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/match_record.dart';
 import '../models/player_stats.dart';
+import '../models/sheet_workspace.dart';
 import '../services/sheets_service.dart';
+import 'main_scaffold.dart';
 import 'player_detail_screen.dart';
+import 'player_select_screen.dart';
 
 class _MatchCardData {
   _MatchCardData();
@@ -13,23 +16,16 @@ class _MatchCardData {
   bool isStarted = false;
   bool isSubmitting = false;
   int? rowIndex;
+  /// 여러 판 입력 모드: 승리 버튼을 누른 순서대로 모아서 한 번에 저장
+  bool multiMode = false;
+  /// 누른 순서 (true = A팀 승)
+  final List<bool> multiResults = [];
   final List<String> teamA = [];
   final List<String> teamB = [];
 
   int get maxPerTeam => matchMode == 0 ? 2 : 1;
   bool get isTeamReady =>
       teamA.length == maxPerTeam && teamB.length == maxPerTeam;
-
-  /// 다른 카드의 상태를 복사해 새 카드를 생성 (로컬 카드 보존용)
-  factory _MatchCardData.copyFrom(_MatchCardData other) {
-    final copy = _MatchCardData()
-      ..matchMode = other.matchMode
-      ..isStarted = other.isStarted
-      ..rowIndex = other.rowIndex;
-    copy.teamA.addAll(other.teamA);
-    copy.teamB.addAll(other.teamB);
-    return copy;
-  }
 }
 
 /// 홈 프로필 카드 — 당일 경기 한 건
@@ -64,6 +60,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   int _selectedPlayerIndex = 0;
   int _rankingTab = 0;
+  /// 경기 기록 선수 칩 정렬: true = 가나다 순, false = 랭킹 순
+  bool _sortByName = true;
   List<_MatchCardData> _matchCards = [_MatchCardData()];
   List<String> _rankChanges = [];
   bool _bannerDismissed = false;
@@ -77,18 +75,22 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadData();
   }
 
-  Future<void> _loadData() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
+  /// [silent]가 true면 스피너 없이 갱신하고 서버에 없는 로컬 카드는 유지한다.
+  /// [force]가 true면 기록DB 로컬 캐시를 무시하고 전체를 다시 읽는다.
+  Future<void> _loadData({bool silent = false, bool force = false}) async {
+    if (!silent) {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+    }
 
     try {
       final results = await Future.wait([
         _sheetsService.fetchPlayerStats(),
         _sheetsService.fetchDailyRanking(),
         _sheetsService.fetchInProgressGames(),
-        _sheetsService.fetchMatchRecords(),
+        _sheetsService.fetchMatchRecords(force: force),
       ]);
       final stats = results[0] as List<PlayerStats>;
       final daily =
@@ -96,17 +98,14 @@ class _HomeScreenState extends State<HomeScreen> {
       final inProgressRecords = results[2] as List<MatchRecord>;
       final allRecords = results[3] as List<MatchRecord>;
 
-      final seasons = await _sheetsService.fetchAvailableSeasons();
-      final archivedLists = await Future.wait(
-        seasons.map(_sheetsService.fetchSeasonRecords),
-      );
-      final mergedHistory = <MatchRecord>[...allRecords];
-      for (final list in archivedLists) {
-        mergedHistory.addAll(list);
-      }
+      final mergedHistory = <MatchRecord>[
+        ...allRecords,
+        ...await _sheetsService.fetchArchivedRecords(),
+      ];
 
       final prefs = await SharedPreferences.getInstance();
       final savedName = prefs.getString('selected_player');
+      _sortByName = prefs.getBool('match_sort_by_name') ?? true;
 
       final hasAnyScore = stats.any((p) => p.finalScore > 0 || p.wins > 0 || p.losses > 0);
       if (hasAnyScore) {
@@ -131,7 +130,13 @@ class _HomeScreenState extends State<HomeScreen> {
       final changes = _detectRankChanges(prefs, stats);
 
       final inProgressCards = _buildInProgressCards(inProgressRecords);
+      if (silent) {
+        inProgressCards.addAll(
+          _matchCards.where((c) => c.rowIndex == null && !c.isSubmitting),
+        );
+      }
 
+      if (!mounted) return;
       setState(() {
         _playerStats = stats;
         _dailyDate = daily.date;
@@ -149,6 +154,19 @@ class _HomeScreenState extends State<HomeScreen> {
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
+      if (silent) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('새로고침 실패: $e'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+        return;
+      }
       setState(() {
         _error = e.toString();
         _isLoading = false;
@@ -242,7 +260,7 @@ class _HomeScreenState extends State<HomeScreen> {
           : _error != null
               ? _buildError()
               : RefreshIndicator(
-                  onRefresh: _loadData,
+                  onRefresh: () => _loadData(force: true),
                   child: SingleChildScrollView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     child: Column(
@@ -321,9 +339,9 @@ class _HomeScreenState extends State<HomeScreen> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                '슈터탁구본부',
-                style: TextStyle(
+              Text(
+                SheetsService.currentWorkspace.name,
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -354,8 +372,19 @@ class _HomeScreenState extends State<HomeScreen> {
             constraints: const BoxConstraints(),
             onSelected: (value) {
               if (value == 'archive') _showArchiveDialog();
+              if (value == 'workspace') _showWorkspaceSheet();
             },
             itemBuilder: (_) => [
+              const PopupMenuItem(
+                value: 'workspace',
+                child: Row(
+                  children: [
+                    Icon(Icons.swap_horiz_rounded, size: 20),
+                    SizedBox(width: 8),
+                    Text('대상 시트 변경'),
+                  ],
+                ),
+              ),
               const PopupMenuItem(
                 value: 'archive',
                 child: Row(
@@ -370,6 +399,209 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  // ── 대상 시트 선택/추가 ──
+  Future<void> _showWorkspaceSheet() async {
+    final workspaces = await SheetsService.loadWorkspaces();
+    if (!mounted) return;
+    final current = SheetsService.currentWorkspace;
+
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Row(
+                children: [
+                  Icon(Icons.table_chart_outlined, size: 20),
+                  SizedBox(width: 8),
+                  Text('대상 시트',
+                      style: TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.bold)),
+                ],
+              ),
+            ),
+            ...workspaces.map((w) {
+              final isActive = w.spreadsheetId == current.spreadsheetId;
+              final isDefault = w.spreadsheetId ==
+                  SheetsService.defaultWorkspace.spreadsheetId;
+              return ListTile(
+                leading: Icon(
+                  isActive
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_off,
+                  color: isActive ? const Color(0xFF1A1A2E) : Colors.grey,
+                ),
+                title: Text(w.name,
+                    style: TextStyle(
+                        fontWeight:
+                            isActive ? FontWeight.bold : FontWeight.w500)),
+                subtitle: Text(w.spreadsheetId,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 11)),
+                trailing: isDefault || isActive
+                    ? null
+                    : IconButton(
+                        icon: Icon(Icons.delete_outline,
+                            color: Colors.grey.shade500),
+                        onPressed: () async {
+                          await SheetsService.deleteWorkspace(w);
+                          if (!ctx.mounted) return;
+                          Navigator.pop(ctx);
+                          _showWorkspaceSheet();
+                        },
+                      ),
+                onTap: isActive
+                    ? null
+                    : () {
+                        Navigator.pop(ctx);
+                        _switchWorkspace(w);
+                      },
+              );
+            }),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.add, color: Color(0xFF1A1A2E)),
+              title: const Text('시트 추가',
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+              onTap: () async {
+                Navigator.pop(ctx);
+                final added = await _showAddWorkspaceDialog();
+                if (added != null) _switchWorkspace(added);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<SheetWorkspace?> _showAddWorkspaceDialog() async {
+    final nameCtrl = TextEditingController();
+    final sheetCtrl = TextEditingController();
+    final scriptCtrl = TextEditingController();
+    String? error;
+
+    final result = await showDialog<SheetWorkspace>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('시트 추가'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(
+                    labelText: '시트 이름',
+                    hintText: '예: OO탁구회',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: sheetCtrl,
+                  decoration: const InputDecoration(
+                    labelText: '스프레드시트 URL 또는 ID',
+                    hintText: 'https://docs.google.com/spreadsheets/d/…',
+                  ),
+                  maxLines: 2,
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: scriptCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Apps Script 웹앱 URL (선택)',
+                    hintText: '비우면 기본 스크립트 사용',
+                  ),
+                  maxLines: 2,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '시트는 "링크가 있는 모든 사용자" 보기 권한이어야 하고 '
+                  '시트 구조는 기본 시트와 같아야 합니다.\n'
+                  'Apps Script URL을 비우면 기본 스크립트를 쓰며, 이 경우 시트를 '
+                  '기본 스크립트 계정에 편집자로 공유해야 저장이 됩니다.',
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                ),
+                if (error != null) ...[
+                  const SizedBox(height: 8),
+                  Text(error!,
+                      style: const TextStyle(fontSize: 12, color: Colors.red)),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('취소'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final name = nameCtrl.text.trim();
+                final id = SheetWorkspace.parseSpreadsheetId(sheetCtrl.text);
+                final script = scriptCtrl.text.trim().isEmpty
+                    ? SheetsService.defaultWorkspace.appsScriptUrl
+                    : scriptCtrl.text.trim();
+                if (name.isEmpty || id.isEmpty) {
+                  setDialogState(() => error = '이름과 스프레드시트를 입력하세요');
+                  return;
+                }
+                if (!script.startsWith('https://script.google.com/')) {
+                  setDialogState(
+                      () => error = 'Apps Script URL 형식이 아닙니다');
+                  return;
+                }
+                if (id == SheetsService.defaultWorkspace.spreadsheetId) {
+                  setDialogState(
+                      () => error = '기본 시트와 같은 스프레드시트입니다');
+                  return;
+                }
+                Navigator.pop(
+                  ctx,
+                  SheetWorkspace(
+                      name: name, spreadsheetId: id, appsScriptUrl: script),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF1A1A2E),
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('추가'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result != null) await SheetsService.saveWorkspace(result);
+    return result;
+  }
+
+  Future<void> _switchWorkspace(SheetWorkspace ws) async {
+    final hasPlayer = await SheetsService.switchWorkspace(ws);
+    if (!mounted) return;
+    // 시트가 바뀌면 화면 전체를 새로 시작 (선수 선택 이력이 있으면 바로 홈으로)
+    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) =>
+            hasPlayer ? const MainScaffold() : const PlayerSelectScreen(),
+      ),
+      (_) => false,
     );
   }
 
@@ -580,6 +812,16 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
+  }
+
+  /// 시트 기록 형식("2026. 9. 15 오후 1:04:54")으로 현재 시각 문자열 생성
+  String _formatNow() {
+    final n = DateTime.now();
+    String two(int v) => v.toString().padLeft(2, '0');
+    final ampm = n.hour < 12 ? '오전' : '오후';
+    final hour12 = n.hour % 12 == 0 ? 12 : n.hour % 12;
+    return '${n.year}. ${n.month}. ${n.day} $ampm '
+        '$hour12:${two(n.minute)}:${two(n.second)}';
   }
 
   String _extractDateKey(String date) {
@@ -1529,6 +1771,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildMatchCard(int cardIndex) {
     final card = _matchCards[cardIndex];
     final allNames = _playerStats.map((p) => p.name).toList();
+    if (_sortByName) allNames.sort();
+    // 정렬 선택은 편집 가능한 첫 카드에만 표시
+    final showSort =
+        cardIndex == _matchCards.indexWhere((c) => !c.isStarted);
 
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
@@ -1558,6 +1804,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 style:
                     const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
+              if (showSort) ...[
+                const SizedBox(width: 12),
+                Text('정렬',
+                    style:
+                        TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+                const SizedBox(width: 6),
+                _buildSortOption('가나다 순', true),
+                const SizedBox(width: 8),
+                _buildSortOption('랭킹 순', false),
+              ],
               if (card.isStarted) ...[
                 const SizedBox(width: 8),
                 Container(
@@ -1733,69 +1989,222 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
+    final multi = card.multiMode;
+    final results = card.multiResults;
+    final total = results.length;
+    final teamAName = card.teamA.join(', ');
+    final teamBName = card.teamB.join(', ');
+
     return Column(
       children: [
-        Text(
-          '승리 팀을 선택하세요',
-          style: TextStyle(
-            fontSize: 13,
-            color: Colors.grey.shade600,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
-              child: SizedBox(
-                height: 48,
-                child: ElevatedButton(
-                  onPressed: () =>
-                      _submitResult(cardIndex, isTeamAWinner: true),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                  child: const Text(
-                    'A팀 승리',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+              child: Text(
+                multi ? '이긴 순서대로 누르세요' : '승리 팀을 선택하세요',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: SizedBox(
-                height: 48,
-                child: ElevatedButton(
-                  onPressed: () =>
-                      _submitResult(cardIndex, isTeamAWinner: false),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
+            // 여러 판 입력 체크박스
+            GestureDetector(
+              onTap: () => setState(() {
+                card.multiMode = !card.multiMode;
+                card.multiResults.clear();
+              }),
+              behavior: HitTestBehavior.opaque,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: Checkbox(
+                      value: multi,
+                      onChanged: (v) => setState(() {
+                        card.multiMode = v ?? false;
+                        card.multiResults.clear();
+                      }),
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      activeColor: const Color(0xFF1A1A2E),
                     ),
                   ),
-                  child: const Text(
-                    'B팀 승리',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  const SizedBox(width: 4),
+                  Text(
+                    '여러 판 입력',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
                   ),
-                ),
+                ],
               ),
             ),
           ],
         ),
+        if (multi) ...[
+          const SizedBox(height: 10),
+          // 누른 순서대로 파랑(A)/빨강(B) 네모 나열. 네모를 누르면 그 판만 제거.
+          if (results.isEmpty)
+            Text(
+              '아직 입력한 판이 없습니다',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+            )
+          else
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              alignment: WrapAlignment.center,
+              children: List.generate(results.length, (i) {
+                final color = results[i] ? Colors.blue : Colors.red;
+                return GestureDetector(
+                  onTap: () => setState(() => results.removeAt(i)),
+                  child: Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: color,
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: color.shade800, width: 1.5),
+                    ),
+                    child: Center(
+                      child: Text(
+                        results[i] ? 'A' : 'B',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ),
+        ],
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: _buildWinButton(
+                label: '$teamAName 승리',
+                color: Colors.blue,
+                onPressed: multi
+                    ? () => setState(() => results.add(true))
+                    : () => _submitResult(cardIndex, isTeamAWinner: true),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildWinButton(
+                label: '$teamBName 승리',
+                color: Colors.red,
+                onPressed: multi
+                    ? () => setState(() => results.add(false))
+                    : () => _submitResult(cardIndex, isTeamAWinner: false),
+              ),
+            ),
+          ],
+        ),
+        if (multi) ...[
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              TextButton(
+                onPressed:
+                    total > 0 ? () => setState(() => results.clear()) : null,
+                child: const Text('초기화'),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: SizedBox(
+                  height: 44,
+                  child: ElevatedButton(
+                    onPressed:
+                        total > 0 ? () => _submitMultiResult(cardIndex) : null,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1A1A2E),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: Text(
+                      total > 0 ? '저장하기 ($total판)' : '저장하기',
+                      style: const TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
       ],
+    );
+  }
+
+  Widget _buildWinButton({
+    required String label,
+    required Color color,
+    required VoidCallback onPressed,
+  }) {
+    return SizedBox(
+      height: 48,
+      child: ElevatedButton(
+        onPressed: onPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 정렬 선택 항목: 선택된 쪽만 초록 체크
+  Widget _buildSortOption(String label, bool byName) {
+    final selected = _sortByName == byName;
+    return GestureDetector(
+      onTap: () async {
+        setState(() => _sortByName = byName);
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('match_sort_by_name', byName);
+      },
+      behavior: HitTestBehavior.opaque,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.check,
+            size: 14,
+            color: selected ? Colors.green : Colors.grey.shade300,
+          ),
+          const SizedBox(width: 2),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: selected ? FontWeight.bold : FontWeight.w500,
+              color: selected ? Colors.black87 : Colors.grey.shade500,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1860,40 +2269,45 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   /// 5분 이내에 동일한 팀 구성의 경기 기록이 있는지 확인
-  bool _hasDuplicateRecord(List<String> winners, List<String> losers) {
+  /// 시트 기록 시각 파싱. 형식: "2026. 9. 15 오후 1:04:54"
+  /// (초·오전/오후 생략, "2026.09.15 13:04" 같은 24시간제도 허용)
+  static final _recordDateRegex = RegExp(
+    r'^(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\s+(오전|오후)?\s*(\d{1,2}):(\d{2})(?::(\d{2}))?$',
+  );
+
+  DateTime? _parseRecordDate(String date) {
+    final m = _recordDateRegex.firstMatch(date.trim());
+    if (m == null) return null;
+    var hour = int.parse(m.group(5)!);
+    final ampm = m.group(4);
+    if (ampm == '오후' && hour < 12) hour += 12;
+    if (ampm == '오전' && hour == 12) hour = 0;
+    return DateTime(
+      int.parse(m.group(1)!),
+      int.parse(m.group(2)!),
+      int.parse(m.group(3)!),
+      hour,
+      int.parse(m.group(6)!),
+      int.parse(m.group(7) ?? '0'),
+    );
+  }
+
+  /// [records]에서 5분 이내 동일 팀 구성(팀 순서·승패 무관) 기록을 찾아
+  /// 가장 최근 것의 경과 시간(초)을 돌려준다. 없으면 null.
+  int? _recentDuplicateSeconds(
+      List<MatchRecord> records, List<String> winners, List<String> losers) {
     final winSet = winners.where((n) => n.isNotEmpty).toSet();
     final loseSet = losers.where((n) => n.isNotEmpty).toSet();
     final allPlayers = {...winSet, ...loseSet};
 
     final now = DateTime.now();
-    for (final r in _matchRecords.reversed) {
-      // 날짜 파싱 (형식: "YYYY.MM.DD HH:mm" 또는 "YYYY.M.D H:mm")
-      DateTime? recordTime;
-      try {
-        final trimmed = r.date.trim();
-        final spaceIdx = trimmed.indexOf(' ');
-        if (spaceIdx >= 0) {
-          final datePart = trimmed.substring(0, spaceIdx);
-          final timePart = trimmed.substring(spaceIdx + 1);
-          final dateParts = datePart.split('.');
-          final timeParts = timePart.split(':');
-          if (dateParts.length >= 3 && timeParts.length >= 2) {
-            recordTime = DateTime(
-              int.parse(dateParts[0]),
-              int.parse(dateParts[1]),
-              int.parse(dateParts[2]),
-              int.parse(timeParts[0]),
-              int.parse(timeParts[1]),
-            );
-          }
-        }
-      } catch (_) {
-        continue;
-      }
+    for (final r in records.reversed) {
+      final recordTime = _parseRecordDate(r.date);
       if (recordTime == null) continue;
 
       // 5분 초과한 기록은 무시
-      if (now.difference(recordTime).inMinutes > 5) continue;
+      final elapsedSeconds = now.difference(recordTime).inSeconds;
+      if (elapsedSeconds > 5 * 60) continue;
 
       final rWinSet = {r.winner1, r.winner2}.where((n) => n.isNotEmpty).toSet();
       final rLoseSet = {r.loser1, r.loser2}.where((n) => n.isNotEmpty).toSet();
@@ -1904,17 +2318,34 @@ class _HomeScreenState extends State<HomeScreen> {
           rAllPlayers.containsAll(allPlayers) &&
           ((rWinSet.containsAll(winSet) && rLoseSet.containsAll(loseSet)) ||
               (rWinSet.containsAll(loseSet) && rLoseSet.containsAll(winSet)))) {
-        return true;
+        return elapsedSeconds;
       }
     }
-    return false;
+    return null;
   }
 
-  Future<void> _submitResult(int cardIndex,
-      {required bool isTeamAWinner}) async {
+  Future<void> _submitResult(int cardIndex, {required bool isTeamAWinner}) =>
+      _submitGames(cardIndex, [isTeamAWinner]);
+
+  /// 여러 판 입력: 누른 순서 그대로 저장
+  Future<void> _submitMultiResult(int cardIndex) {
     final card = _matchCards[cardIndex];
+    return _submitGames(cardIndex, List<bool>.of(card.multiResults));
+  }
+
+  /// [teamAWins]의 각 항목(true = A팀 승)을 순서대로 시트에 저장.
+  Future<void> _submitGames(int cardIndex, List<bool> teamAWins) async {
+    if (teamAWins.isEmpty) return;
+    final card = _matchCards[cardIndex];
+    final isMulti = teamAWins.length > 1;
+    final countA = teamAWins.where((a) => a).length;
+    final countB = teamAWins.length - countA;
+    // 카드 복원(승리팀 유지 여부)·확인 문구는 마지막 판 기준
+    final isTeamAWinner = teamAWins.last;
     final winners = isTeamAWinner ? card.teamA : card.teamB;
     final losers = isTeamAWinner ? card.teamB : card.teamA;
+    final teamA = List<String>.from(card.teamA);
+    final teamB = List<String>.from(card.teamB);
 
     // 현재 선택된 플레이어가 승리팀에 포함됐는지 미리 확인 (비동기 전에 캡처)
     final currentPlayerName =
@@ -1930,8 +2361,36 @@ class _HomeScreenState extends State<HomeScreen> {
     final winnerText = winner2.isEmpty ? winner1 : '$winner1, $winner2';
     final loserText = loser2.isEmpty ? loser1 : '$loser1, $loser2';
 
+    // 중복 판정은 시트 최신 기록 기준 (다른 기기에서 방금 저장한 것도 반영)
+    List<MatchRecord> latestRecords;
+    try {
+      latestRecords = await _sheetsService.fetchMatchRecords();
+    } catch (_) {
+      latestRecords = _matchRecords;
+    }
+    if (!mounted) return;
+    final duplicateSeconds =
+        _recentDuplicateSeconds(latestRecords, winners, losers);
+
+    // 30초 이내 동일 팀 구성 기록이 있으면 차단 (연타·실수 방지)
+    if (duplicateSeconds != null && duplicateSeconds < 30) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '같은 조합이 $duplicateSeconds초 전에 저장되었습니다. '
+            '${30 - duplicateSeconds}초 후 다시 시도하세요',
+          ),
+          backgroundColor: Colors.orange.shade700,
+          behavior: SnackBarBehavior.floating,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+      return;
+    }
+
     // 5분 이내 동일 팀 구성 기록 존재 시 경고 얼럿
-    if (_hasDuplicateRecord(winners, losers)) {
+    if (duplicateSeconds != null) {
       final proceed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -1971,33 +2430,59 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('경기 결과 저장'),
+        title: Text(isMulti ? '경기 결과 저장 (${teamAWins.length}판)' : '경기 결과 저장'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Row(
-              children: [
-                const Icon(Icons.emoji_events, color: Colors.amber, size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text('승: $winnerText',
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Icon(Icons.close, color: Colors.red.shade300, size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text('패: $loserText',
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
-                ),
-              ],
-            ),
+            if (isMulti) ...[
+              Row(
+                children: [
+                  const Icon(Icons.emoji_events, color: Colors.blue, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text('A팀 ${teamA.join(', ')}: $countA승',
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.emoji_events, color: Colors.red, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text('B팀 ${teamB.join(', ')}: $countB승',
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                  ),
+                ],
+              ),
+            ] else ...[
+              Row(
+                children: [
+                  const Icon(Icons.emoji_events, color: Colors.amber, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text('승: $winnerText',
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Icon(Icons.close, color: Colors.red.shade300, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text('패: $loserText',
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 16),
-            const Text('이 결과를 저장하시겠습니까?'),
+            Text(isMulti
+                ? '총 ${teamAWins.length}판을 순서대로 저장합니다.'
+                : '이 결과를 저장하시겠습니까?'),
           ],
         ),
         actions: [
@@ -2021,29 +2506,52 @@ class _HomeScreenState extends State<HomeScreen> {
 
     setState(() => card.isSubmitting = true);
 
+    // 저장에 성공한 판 (실패 시에도 여기까지는 로컬에 반영)
+    final savedRecords = <MatchRecord>[];
+
     try {
-      if (card.rowIndex != null) {
-        await _sheetsService.completeGame(
-          rowIndex: card.rowIndex!,
-          winner1: winner1,
-          winner2: winner2,
-          loser1: loser1,
-          loser2: loser2,
-        );
-      } else {
-        await _sheetsService.submitMatchResult(
-          winner1: winner1,
-          winner2: winner2,
-          loser1: loser1,
-          loser2: loser2,
-        );
+      for (final aWins in teamAWins) {
+        final w = aWins ? teamA : teamB;
+        final l = aWins ? teamB : teamA;
+        final gw1 = w[0];
+        final gw2 = w.length > 1 ? w[1] : '';
+        final gl1 = l[0];
+        final gl2 = l.length > 1 ? l[1] : '';
+
+        // 진행중 경기였다면 첫 판만 완료 처리, 나머지는 신규 기록
+        if (savedRecords.isEmpty && card.rowIndex != null) {
+          await _sheetsService.completeGame(
+            rowIndex: card.rowIndex!,
+            winner1: gw1,
+            winner2: gw2,
+            loser1: gl1,
+            loser2: gl2,
+          );
+        } else {
+          await _sheetsService.submitMatchResult(
+            winner1: gw1,
+            winner2: gw2,
+            loser1: gl1,
+            loser2: gl2,
+          );
+        }
+        savedRecords.add(MatchRecord(
+          rowIndex: _matchRecords.length + savedRecords.length + 2,
+          date: _formatNow(),
+          winner1: gw1,
+          winner2: gw2,
+          loser1: gl1,
+          loser2: gl2,
+        ));
       }
 
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('저장 완료! 승: $winnerText'),
+          content: Text(isMulti
+              ? '저장 완료! A팀 $countA승 · B팀 $countB승'
+              : '저장 완료! 승: $winnerText'),
           backgroundColor: Colors.green,
           behavior: SnackBarBehavior.floating,
           shape:
@@ -2051,44 +2559,56 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       );
 
-      // _loadData 전에 다른 로컬 카드 상태 백업
-      // (rowIndex가 없는 카드 = 서버에 저장되지 않은 로컬 카드, 제출 카드 제외)
-      final savedLocalCards = _matchCards
-          .where((c) => c != card && c.rowIndex == null)
-          .map((c) => _MatchCardData.copyFrom(c))
-          .toList();
-
-      // _loadData가 _matchCards를 새로 초기화하므로 먼저 await
-      await _loadData();
-
-      // 로드 완료 후 복원
-      if (!mounted) return;
+      // 서버 재조회를 기다리지 않고 로컬에 즉시 반영.
+      // 순위/점수는 아래 백그라운드 갱신이 끝나면 따라온다.
       setState(() {
-        // 백업해둔 로컬 카드 복원
-        _matchCards.addAll(savedLocalCards);
+        _matchRecords.addAll(savedRecords);
 
-        // A팀 복원 (첫 번째 카드 기준)
-        if (currentPlayerName.isNotEmpty && _matchCards.isNotEmpty) {
+        // 제출한 카드를 다음 경기용 로컬 카드로 되돌림
+        card
+          ..isSubmitting = false
+          ..isStarted = false
+          ..rowIndex = null
+          ..multiResults.clear()
+          ..teamB.clear()
+          ..teamA.clear();
+        if (currentPlayerName.isNotEmpty) {
           if (currentPlayerWon) {
             // 이긴 경우: 승리팀 전체 유지
-            _matchCards[0].teamA
-              ..clear()
-              ..addAll(winTeamCopy);
+            card.teamA.addAll(winTeamCopy);
           } else {
             // 진 경우: 내 이름만 A팀에 남김
-            _matchCards[0].teamA
-              ..clear()
-              ..add(currentPlayerName);
+            card.teamA.add(currentPlayerName);
           }
         }
       });
+
+      // 순위·통계는 스피너 없이 백그라운드로 갱신
+      await _loadData(silent: true);
     } catch (e) {
       if (!mounted) return;
-      setState(() => card.isSubmitting = false);
+      final saved = savedRecords.length;
+      final remaining = teamAWins.sublist(saved);
+      setState(() {
+        _matchRecords.addAll(savedRecords);
+        card.isSubmitting = false;
+        if (saved > 0 && card.rowIndex != null) {
+          // 진행중 행은 첫 판에서 이미 완료 처리됨
+          card.rowIndex = null;
+          card.isStarted = false;
+        }
+        if (isMulti) {
+          card.multiResults
+            ..clear()
+            ..addAll(remaining);
+        }
+      });
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('저장 실패: $e'),
+          content: Text(saved > 0
+              ? '$saved판 저장 후 실패 (남은 ${remaining.length}판 다시 저장하세요): $e'
+              : '저장 실패: $e'),
           backgroundColor: Colors.red,
           behavior: SnackBarBehavior.floating,
           shape:

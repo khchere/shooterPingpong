@@ -19,6 +19,9 @@ class MatchRecord {
 
   bool get isInProgress => status == '진행중';
 
+  /// 로컬 캐시 저장용 (시트 행과 같은 5칸)
+  List<String> toRow() => [date, winner1, winner2, loser1, loser2];
+
   factory MatchRecord.fromSheetRow(List<dynamic> row, int rowIndex) {
     return MatchRecord(
       rowIndex: rowIndex,

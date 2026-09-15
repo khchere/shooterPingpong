@@ -160,9 +160,9 @@ class _PlayerSelectScreenState extends State<PlayerSelectScreen> {
         const SizedBox(height: 48),
         const Icon(Icons.sports_tennis, color: Colors.white, size: 56),
         const SizedBox(height: 16),
-        const Text(
-          '슈터탁구본부',
-          style: TextStyle(
+        Text(
+          SheetsService.currentWorkspace.name,
+          style: const TextStyle(
             color: Colors.white,
             fontSize: 28,
             fontWeight: FontWeight.bold,

@@ -15,10 +15,15 @@ class PlayerDetailScreen extends StatefulWidget {
 class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
   final SheetsService _sheetsService = SheetsService();
   List<MatchRecord> _records = [];
+  List<MatchRecord> _allSeasonRecords = [];
+  int _tab = 0; // 0: 현재 시즌, 1: 전체 시즌
   bool _isLoading = true;
 
   List<_PlayerMatchResult> _myGames = [];
   Map<String, _HeadToHead> _h2h = {};
+  /// 1v1(단식) 경기만 집계한 상대 전적
+  Map<String, _HeadToHead> _h2hSingles = {};
+  bool _h2hSinglesOnly = false;
   Map<String, _PartnerRecord> _partners = {};
 
   @override
@@ -30,8 +35,12 @@ class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
     try {
-      final records = await _sheetsService.fetchMatchRecords();
-      _records = records;
+      final results = await Future.wait([
+        _sheetsService.fetchMatchRecords(),
+        _sheetsService.fetchAllSeasonRecords(),
+      ]);
+      _records = results[0];
+      _allSeasonRecords = results[1];
       _analyze();
       setState(() => _isLoading = false);
     } catch (e) {
@@ -39,19 +48,25 @@ class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
     }
   }
 
+  /// 탭에 따라 현재 시즌 기록 또는 전체 시즌(아카이브 포함) 기록
+  List<MatchRecord> get _activeRecords =>
+      _tab == 0 ? _records : _allSeasonRecords;
+
   void _analyze() {
     final name = widget.player.name;
     final games = <_PlayerMatchResult>[];
     final h2h = <String, _HeadToHead>{};
+    final h2hSingles = <String, _HeadToHead>{};
     final partners = <String, _PartnerRecord>{};
 
-    for (final r in _records) {
+    for (final r in _activeRecords) {
       final winners = [r.winner1, r.winner2].where((n) => n.isNotEmpty).toSet();
       final losers = [r.loser1, r.loser2].where((n) => n.isNotEmpty).toSet();
 
       if (!winners.contains(name) && !losers.contains(name)) continue;
 
       final isWin = winners.contains(name);
+      final isSingles = winners.length == 1 && losers.length == 1;
       final myTeam = isWin ? winners : losers;
       final opTeam = isWin ? losers : winners;
       final partner = myTeam.where((n) => n != name).join(', ');
@@ -71,6 +86,14 @@ class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
         } else {
           h2h[op]!.losses++;
         }
+        if (isSingles) {
+          h2hSingles.putIfAbsent(op, () => _HeadToHead(op));
+          if (isWin) {
+            h2hSingles[op]!.wins++;
+          } else {
+            h2hSingles[op]!.losses++;
+          }
+        }
       }
 
       if (partner.isNotEmpty && !partner.contains(',')) {
@@ -85,17 +108,27 @@ class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
 
     _myGames = games;
     _h2h = h2h;
+    _h2hSingles = h2hSingles;
     _partners = partners;
   }
 
   @override
   Widget build(BuildContext context) {
-    final p = widget.player;
+    // 전체 시즌 탭은 시트 승점이 없으므로 기록만으로 계산한 통계 사용
+    final p = _tab == 0
+        ? widget.player
+        : _sheetsService.buildPlayerStatsFromRecords(
+            _allSeasonRecords, widget.player.name);
     return Scaffold(
       backgroundColor: Colors.grey.shade100,
       body: Column(
         children: [
-          _buildHeader(p),
+          _buildHeader(widget.player),
+          if (!_isLoading)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              child: _buildSeasonTabs(),
+            ),
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
@@ -170,6 +203,61 @@ class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
     );
   }
 
+  Widget _buildSeasonTabs() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.grey.shade200,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      padding: const EdgeInsets.all(3),
+      child: Row(
+        children: [
+          _buildTabButton(0, '현재 시즌'),
+          _buildTabButton(1, '전체 시즌'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTabButton(int index, String label) {
+    final isSelected = _tab == index;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() {
+          _tab = index;
+          _analyze();
+        }),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: isSelected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      blurRadius: 4,
+                      offset: const Offset(0, 1),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Text(
+            label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+              color:
+                  isSelected ? const Color(0xFF1A1A2E) : Colors.grey.shade600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildSummaryCard(PlayerStats p) {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -190,7 +278,10 @@ class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
             children: [
               _statCell('승률', '${p.winRate.toStringAsFixed(1)}%'),
               _divider(),
-              _statCell('승점', '${p.finalScore}점'),
+              if (_tab == 0)
+                _statCell('승점', '${p.finalScore}점')
+              else
+                _statCell('총 경기', '${p.totalGames}경기'),
               _divider(),
               _statCell('참여율', '${p.participationRate.toStringAsFixed(1)}%'),
             ],
@@ -391,16 +482,59 @@ class _PlayerDetailScreenState extends State<PlayerDetailScreen> {
   }
 
   // ── 상대 전적 ──
+  /// 상대 전적 필터: 선택된 쪽만 초록 체크
+  Widget _buildH2HFilter(String label, bool singlesOnly) {
+    final selected = _h2hSinglesOnly == singlesOnly;
+    return GestureDetector(
+      onTap: () => setState(() => _h2hSinglesOnly = singlesOnly),
+      behavior: HitTestBehavior.opaque,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.check,
+              size: 14,
+              color: selected ? Colors.green : Colors.grey.shade300),
+          const SizedBox(width: 2),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: selected ? FontWeight.bold : FontWeight.w500,
+              color: selected ? Colors.black87 : Colors.grey.shade500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildH2HSection() {
     if (_h2h.isEmpty) return const SizedBox.shrink();
 
-    final sorted = _h2h.values.toList()
+    final source = _h2hSinglesOnly ? _h2hSingles : _h2h;
+    final sorted = source.values.toList()
       ..sort((a, b) => b.total.compareTo(a.total));
 
     return _card(
       title: '상대 전적',
       child: Column(
         children: [
+          Row(
+            children: [
+              _buildH2HFilter('전체', false),
+              const SizedBox(width: 12),
+              _buildH2HFilter('1v1만', true),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (sorted.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Center(
+                child: Text('1v1 경기 기록 없음',
+                    style: TextStyle(color: Colors.grey.shade500)),
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.only(bottom: 4),
             child: Row(

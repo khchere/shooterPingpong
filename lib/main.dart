@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'screens/main_scaffold.dart';
 import 'screens/player_select_screen.dart';
+import 'services/sheets_service.dart';
 
 void main() {
   runApp(const MyApp());
@@ -44,6 +45,7 @@ class _EntryGateState extends State<_EntryGate> {
   }
 
   Future<void> _checkSavedPlayer() async {
+    await SheetsService.loadActiveWorkspace();
     final prefs = await SharedPreferences.getInstance();
     final name = prefs.getString('selected_player');
     setState(() {
