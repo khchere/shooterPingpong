@@ -76,7 +76,7 @@ class SheetsService {
     name: '슈터탁구본부',
     spreadsheetId: '1dtlIlaNiLkh8s6-qTApfCTuNqGAR2NbMKGP1EsM_CS0',
     appsScriptUrl:
-        'https://script.google.com/macros/s/AKfycbwQy-bSMDNm2SdxZAmQnhzlVWX3rliHQjl7ATKRjQTlmp0FjmYMyfWwhhFFUuiQLjNZ/exec',
+        'https://script.google.com/macros/s/AKfycbwThyommHjU3ii0MY4QSXchjZvgw4vo6a65V-Vzvwij9qf90FNK6kPEDCPKSFQ45klOYg/exec',
   );
 
   static const _workspacesKey = 'sheet_workspaces_v1';
