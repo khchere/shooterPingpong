@@ -5,6 +5,7 @@ import '../models/match_record.dart';
 import '../models/player_stats.dart';
 import '../models/sheet_workspace.dart';
 import '../services/sheets_service.dart';
+import '../services/name_matcher.dart';
 import '../services/voice_input.dart';
 import 'main_scaffold.dart';
 import 'player_detail_screen.dart';
@@ -1899,6 +1900,31 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ],
           ),
+          if (!card.isStarted &&
+              !card.isSubmitting &&
+              (card.teamA.isNotEmpty || card.teamB.isNotEmpty)) ...[
+            const SizedBox(height: 8),
+            Center(
+              child: OutlinedButton.icon(
+                onPressed: () => setState(() {
+                  card.teamA.clear();
+                  card.teamB.clear();
+                  card.multiResults.clear();
+                }),
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('선택 초기화',
+                    style: TextStyle(fontSize: 12)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.grey.shade700,
+                  side: BorderSide(color: Colors.grey.shade300),
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  minimumSize: const Size(0, 34),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+            ),
+          ],
           if (card.isTeamReady && !card.isStarted) ...[
             const SizedBox(height: 12),
             _buildPrediction(card),
@@ -2004,19 +2030,43 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return Column(
       children: [
+        Text(
+          '승리 팀을 선택하세요',
+          style: TextStyle(
+            fontSize: 13,
+            color: Colors.grey.shade600,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
-              child: Text(
-                multi ? '이긴 순서대로 누르세요' : '승리 팀을 선택하세요',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.grey.shade600,
-                  fontWeight: FontWeight.w500,
-                ),
+              child: _buildWinButton(
+                label: '$teamAName 승리',
+                color: Colors.blue,
+                onPressed: multi
+                    ? () => setState(() => results.add(true))
+                    : () => _submitResult(cardIndex, isTeamAWinner: true),
               ),
             ),
-            // 여러 판 입력 체크박스
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildWinButton(
+                label: '$teamBName 승리',
+                color: Colors.red,
+                onPressed: multi
+                    ? () => setState(() => results.add(false))
+                    : () => _submitResult(cardIndex, isTeamAWinner: false),
+              ),
+            ),
+          ],
+        ),
+        // ── 여러 판 입력 (승리 버튼 아래): 체크박스와 A/B 네모를 한 줄에 ──
+        const SizedBox(height: 10),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
             GestureDetector(
               onTap: () => setState(() {
                 card.multiMode = !card.multiMode;
@@ -2048,73 +2098,50 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-          ],
-        ),
-        if (multi) ...[
-          const SizedBox(height: 10),
-          // 누른 순서대로 파랑(A)/빨강(B) 네모 나열. 네모를 누르면 그 판만 제거.
-          if (results.isEmpty)
-            Text(
-              '아직 입력한 판이 없습니다',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
-            )
-          else
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              alignment: WrapAlignment.center,
-              children: List.generate(results.length, (i) {
-                final color = results[i] ? Colors.blue : Colors.red;
-                return GestureDetector(
-                  onTap: () => setState(() => results.removeAt(i)),
-                  child: Container(
-                    width: 24,
-                    height: 24,
-                    decoration: BoxDecoration(
-                      color: color,
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: color.shade800, width: 1.5),
-                    ),
-                    child: Center(
-                      child: Text(
-                        results[i] ? 'A' : 'B',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
+            if (multi) ...[
+              const SizedBox(width: 12),
+              // 누른 순서대로 파랑(A)/빨강(B) 네모 나열. 네모를 누르면 그 판만 제거.
+              Expanded(
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: List.generate(results.length, (i) {
+                    final color = results[i] ? Colors.blue : Colors.red;
+                    return GestureDetector(
+                      onTap: () => setState(() => results.removeAt(i)),
+                      child: Container(
+                        width: 24,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: color,
+                          borderRadius: BorderRadius.circular(4),
+                          border:
+                              Border.all(color: color.shade800, width: 1.5),
+                        ),
+                        child: Center(
+                          child: Text(
+                            results[i] ? 'A' : 'B',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ),
-                );
-              }),
-            ),
-        ],
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: _buildWinButton(
-                label: '$teamAName 승리',
-                color: Colors.blue,
-                onPressed: multi
-                    ? () => setState(() => results.add(true))
-                    : () => _submitResult(cardIndex, isTeamAWinner: true),
+                    );
+                  }),
+                ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildWinButton(
-                label: '$teamBName 승리',
-                color: Colors.red,
-                onPressed: multi
-                    ? () => setState(() => results.add(false))
-                    : () => _submitResult(cardIndex, isTeamAWinner: false),
-              ),
-            ),
+            ],
           ],
         ),
         if (multi) ...[
+          const SizedBox(height: 8),
+          Text(
+            total == 0 ? '이긴 순서대로 누르세요' : '네모를 누르면 그 판이 취소됩니다',
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+          ),
           const SizedBox(height: 10),
           Row(
             children: [
@@ -2236,7 +2263,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final names = _playerStats.map((p) => p.name).toList();
     List<String> best = [];
     for (final text in alternatives) {
-      final found = _matchPlayerNames(text, names);
+      final found = NameMatcher.match(text, names);
       if (found.length > best.length) best = found;
       if (best.length == 4) break;
     }
@@ -2266,21 +2293,6 @@ class _HomeScreenState extends State<HomeScreen> {
       '${card.teamA.join(', ')} 승 · ${card.teamB.join(', ')} 패 — '
       '맞으면 "${card.teamA.join(', ')} 승리"를 눌러 저장',
     );
-  }
-
-  /// 인식 문장에서 선수 이름을 등장 순서대로 추출.
-  /// 성 포함 전체 이름 또는 이름 두 글자("이선범"/"선범") 모두 허용, 중복 제외.
-  List<String> _matchPlayerNames(String text, List<String> names) {
-    final compact = text.replaceAll(RegExp(r'[\s,.\-/]'), '');
-    final hits = <({int pos, String name})>[];
-    for (final name in names) {
-      final given = name.length >= 3 ? name.substring(name.length - 2) : name;
-      var pos = compact.indexOf(name);
-      if (pos < 0) pos = compact.indexOf(given);
-      if (pos >= 0) hits.add((pos: pos, name: name));
-    }
-    hits.sort((a, b) => a.pos.compareTo(b.pos));
-    return [for (final h in hits) h.name];
   }
 
   void _showVoiceMessage(String text, {bool error = false}) {
@@ -2752,10 +2764,8 @@ class _HomeScreenState extends State<HomeScreen> {
     List<String> allNames,
     _MatchCardData card,
   ) {
-    final availableNames = allNames
-        .where((n) => !card.teamA.contains(n) && !card.teamB.contains(n))
-        .toList();
-    final needMore = team.length < card.maxPerTeam && !card.isStarted;
+    final otherTeam = identical(team, card.teamA) ? card.teamB : card.teamA;
+    final isFull = team.length >= card.maxPerTeam;
 
     return Container(
       padding: const EdgeInsets.all(5),
@@ -2776,64 +2786,78 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const SizedBox(height: 8),
-          // 선택된 선수 칩
-          ...team.map(
-            (name) => Padding(
-              padding: const EdgeInsets.only(bottom: 5),
-              child: Chip(
-                label: Text(name, style: const TextStyle(fontSize: 12)),
-                deleteIcon:
-                    card.isStarted ? null : const Icon(Icons.close, size: 16),
-                onDeleted: card.isStarted
-                    ? null
-                    : () => setState(() => team.remove(name)),
-                backgroundColor: color.withValues(alpha: 0.15),
-                side: BorderSide(color: color.withValues(alpha: 0.4)),
-                visualDensity: VisualDensity.compact,
+          if (card.isStarted)
+            // 진행중 경기: 선택된 선수만 표시
+            ...team.map(
+              (name) => Padding(
+                padding: const EdgeInsets.only(bottom: 5),
+                child: Chip(
+                  label: Text(name, style: const TextStyle(fontSize: 12)),
+                  backgroundColor: color.withValues(alpha: 0.15),
+                  side: BorderSide(color: color.withValues(alpha: 0.4)),
+                  visualDensity: VisualDensity.compact,
+                ),
               ),
-            ),
-          ),
-          // 추가 가능한 선수 인라인 칩
-          if (needMore && availableNames.isNotEmpty) ...[
-            const SizedBox(height: 4),
+            )
+          else
+            // 전체 명단을 같은 자리에 두고 상태만 바꿈:
+            // 이 팀 선택 = 강조, 상대 팀 선택 = 회색(선택 불가), 나머지 = 기본
             Wrap(
               spacing: 5,
               runSpacing: 4,
               alignment: WrapAlignment.center,
-              children: availableNames
-                  .map(
-                    (name) => GestureDetector(
-                      onTap: () => setState(() => team.add(name)),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 15, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(20),
-                          border:
-                              Border.all(color: color.withValues(alpha: 0.35)),
-                        ),
-                        child: Text(
-                          name,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: color.withValues(alpha: 0.85),
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
+              children: allNames.map((name) {
+                final selectedHere = team.contains(name);
+                final takenByOther = otherTeam.contains(name);
+                final selectable = !takenByOther && (selectedHere || !isFull);
+
+                final Color bg;
+                final Color fg;
+                final Color border;
+                if (selectedHere) {
+                  bg = color;
+                  fg = Colors.white;
+                  border = color;
+                } else if (takenByOther) {
+                  bg = Colors.grey.shade200;
+                  fg = Colors.grey.shade400;
+                  border = Colors.grey.shade300;
+                } else {
+                  bg = Colors.white;
+                  fg = color.withValues(alpha: selectable ? 0.85 : 0.35);
+                  border = color.withValues(alpha: selectable ? 0.35 : 0.15);
+                }
+
+                return GestureDetector(
+                  onTap: !selectable
+                      ? null
+                      : () => setState(() {
+                            if (selectedHere) {
+                              team.remove(name);
+                            } else {
+                              team.add(name);
+                            }
+                          }),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 15, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: bg,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: border),
+                    ),
+                    child: Text(
+                      name,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: fg,
+                        fontWeight:
+                            selectedHere ? FontWeight.bold : FontWeight.w500,
                       ),
                     ),
-                  )
-                  .toList(),
-            ),
-          ],
-          if (needMore && availableNames.isEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                '선택 가능한 선수 없음',
-                style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
-              ),
+                  ),
+                );
+              }).toList(),
             ),
         ],
       ),
